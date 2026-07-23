@@ -1154,15 +1154,31 @@ function apiGet(p){var u=GAS_URL+'?'+Object.keys(p).map(function(k){return k+'='
 function apiPost(b){return fetch(GAS_URL,{method:'POST',body:JSON.stringify(b)}).then(function(r){return r.json()})}
 function dbUpsert(sheet,data){if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});return apiPost({action:'upsert',sheet:sheet,data:data}).then(function(r){if(r.error)throw new Error(r.error);return r})}
 function dbDelete(sheet,id){if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});return apiPost({action:'delete',sheet:sheet,id:id}).then(function(r){if(r.error)throw new Error(r.error);return r})}
-function mergeArr(localArr, remoteArr){
-  // Keep any local record not yet reflected on the server (saved in the last 2 minutes)
-  // so a slow Google Sheets write never looks like lost data during auto-sync.
+// Tracks which record IDs have ever been confirmed present on the server, per table.
+// A record is only ever dropped from the local copy once we KNOW the server had it
+// and it later disappeared (a real deletion) — never just because it hasn't shown up
+// yet (which just means the save is still propagating, or the sync happened to race it).
+var _serverSeenIds = {parties:{},users:{},cashReceipts:{},partyPayments:{},miscIncome:{},blacklist:{},notes:{},messages:{},purchases:{},invoices:{}};
+try{
+  var _seenRaw = localStorage.getItem('eap_serverSeen');
+  if(_seenRaw) _serverSeenIds = Object.assign(_serverSeenIds, JSON.parse(_seenRaw));
+}catch(e){}
+function _persistSeenIds(){
+  try{ localStorage.setItem('eap_serverSeen', JSON.stringify(_serverSeenIds)); }catch(e){}
+}
+function mergeArr(key, localArr, remoteArr){
+  var seen = _serverSeenIds[key] || (_serverSeenIds[key]={});
   var remoteIds = {};
-  remoteArr.forEach(function(r){ if(r.id) remoteIds[r.id]=true; });
+  remoteArr.forEach(function(r){ if(r.id){ remoteIds[r.id]=true; seen[r.id]=true; } });
   var pending = localArr.filter(function(r){
     if(!r.id || remoteIds[r.id]) return false;
-    var ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-    return (Date.now()-ts) < 120000;
+    // Never confirmed on the server yet — could still be propagating (or a failed/slow
+    // save). Keep it locally indefinitely until it shows up remotely or is explicitly
+    // deleted by the user (dbDelete already removes it from the local array directly).
+    if(!seen[r.id]) return true;
+    // Was confirmed present before and is now gone from the server response — a real
+    // deletion (by this user or another device). Safe to drop.
+    return false;
   });
   return remoteArr.concat(pending);
 }
@@ -1173,17 +1189,18 @@ function syncAll(){
   setSyncStatus('syncing');
   return apiGet({action:'getAll'}).then(function(data){
     if(data.error)throw new Error(data.error);
-    DB.parties=mergeArr(DB.parties,data.parties||[]);
-    DB.users=mergeArr(DB.users,data.users||[]);
-    DB.cashReceipts=mergeArr(DB.cashReceipts,data.cashReceipts||[]);
-    DB.partyPayments=mergeArr(DB.partyPayments,data.partyPayments||[]);
-    DB.miscIncome=mergeArr(DB.miscIncome,data.miscIncome||[]);
-    DB.blacklist=mergeArr(DB.blacklist,data.blacklist||[]);
-    DB.notes=mergeArr(DB.notes,data.notes||[]);
-    DB.messages=mergeArr(DB.messages,data.messages||[]);
-    DB.purchases=mergeArr(DB.purchases,data.purchases||[]);
-    DB.invoices=mergeArr(DB.invoices,data.invoices||[]);
+    DB.parties=mergeArr('parties',DB.parties,data.parties||[]);
+    DB.users=mergeArr('users',DB.users,data.users||[]);
+    DB.cashReceipts=mergeArr('cashReceipts',DB.cashReceipts,data.cashReceipts||[]);
+    DB.partyPayments=mergeArr('partyPayments',DB.partyPayments,data.partyPayments||[]);
+    DB.miscIncome=mergeArr('miscIncome',DB.miscIncome,data.miscIncome||[]);
+    DB.blacklist=mergeArr('blacklist',DB.blacklist,data.blacklist||[]);
+    DB.notes=mergeArr('notes',DB.notes,data.notes||[]);
+    DB.messages=mergeArr('messages',DB.messages,data.messages||[]);
+    DB.purchases=mergeArr('purchases',DB.purchases,data.purchases||[]);
+    DB.invoices=mergeArr('invoices',DB.invoices,data.invoices||[]);
     DB.settings=data.settings||[];
+    _persistSeenIds();
     applySettingsFromDB();setSyncStatus('live');updateApprovalBadge();updateMsgBadge();populateDropdowns();refreshCurrentPage();
     _syncInFlight = false;
     return data;
