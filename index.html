@@ -848,7 +848,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
           <button class="btn btn-ghost btn-sm" onclick="backToOwnDaybook()">← Back to My Daybook</button>
         </div>
         <div class="grid4" style="margin-bottom:14px">
-          <div class="stat" data-icon="🏦"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Opening Balance</div><div class="stat-val" style="font-size:20px" id="dbOpening">₹0</div><div class="stat-lbl">Starting Cash Float</div></div>
+          <div class="stat" data-icon="🏦"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Previous Balance</div><div class="stat-val" style="font-size:20px" id="dbOpening">₹0</div><div class="stat-lbl">Carried Forward</div></div>
           <div class="stat" data-icon="💚"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Today's Income</div><div class="stat-val" style="font-size:20px;color:var(--success)" id="dbIncome">₹0</div><div class="stat-lbl">Cash Received</div></div>
           <div class="stat" data-icon="🔴"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Today's Expense</div><div class="stat-val" style="font-size:20px;color:var(--danger)" id="dbExpense">₹0</div><div class="stat-lbl">Cash Paid Out</div></div>
           <div class="stat" data-icon="💰"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Cash In Hand</div><div class="stat-val" style="font-size:20px" id="dbCashInHand">₹0</div><div class="stat-lbl">Current Running Balance</div></div>
@@ -912,7 +912,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
               <button class="btn btn-primary btn-sm" onclick="openUserModal()">+ Add User</button>
             </div>
           </div>
-          <div class="tbl-wrap"><table><thead><tr><th>User</th><th>Username</th><th>Role</th><th>Permissions</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="usersTable"></tbody></table></div>
+          <div class="tbl-wrap"><table><thead><tr><th>User</th><th>Username</th><th>Role</th><th>Total Income</th><th>Total Expenses</th><th>Net Balance</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="usersTable"></tbody></table></div>
         </div>
       </div>
 
@@ -2054,7 +2054,12 @@ function renderUsersTable(){
   var q=(document.getElementById('userSearch').value||'').toLowerCase();
   var rows=DB.users.filter(function(u){return !q||(u.name&&u.name.toLowerCase().indexOf(q)>-1)||u.username.toLowerCase().indexOf(q)>-1});
   var colors=['var(--primary3)','var(--success2)','var(--info2)','var(--warning2)'];var tc=['var(--primary)','var(--success)','var(--info)','var(--warning)'];
-  el.innerHTML=rows.map(function(u,i){var pd=typeof u.perms==='string'?u.perms.replace(/,/g,', '):Array.isArray(u.perms)?u.perms.join(', '):'';return'<tr><td><div style="display:flex;align-items:center;gap:8px"><div class="avatar" style="width:28px;height:28px;font-size:11px;background:'+colors[i%4]+';color:'+tc[i%4]+'">'+(u.name?u.name[0]:'?')+'</div><div><div style="font-size:12px;font-weight:600;color:#fff">'+u.name+'</div><div style="font-size:10px;color:var(--text2)">'+(u.email||'—')+'</div></div></div></td><td style="font-size:11px;color:var(--text2)">'+u.username+'</td><td><span class="tag '+(u.role==='Administrator'?'tp':u.role==='Cashier'?'tb':u.role==='Accountant'?'ty':'tgr')+'">'+u.role+'</span></td><td style="font-size:10px;color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+pd+'</td><td><span class="tag '+(u.status==='active'?'tg':'tgr')+'">'+u.status+'</span></td><td style="font-size:10px;color:var(--text2)">'+(u.lastLogin||'—')+'</td><td class="tbl-actions"><button class="btn btn-info btn-xs" onclick="openUserModal(\''+u.id+'\')">✏️</button><button class="btn btn-warning btn-xs" onclick="toggleUserStatus(\''+u.id+'\')">'+(u.status==='active'?'🔒':'🔓')+'</button>'+(u.username!=='admin'?'<button class="btn btn-danger btn-xs" onclick="deleteUser(\''+u.id+'\')">🗑️</button>':'')+'</td></tr>'}).join('');
+  el.innerHTML=rows.map(function(u,i){
+    var totalIncome=getUserIncomeRows(u.username,null).reduce(function(s,r){return s+r.amount;},0);
+    var totalExpense=getUserExpenseRows(u.username,null).reduce(function(s,r){return s+r.amount;},0);
+    var netBalance=totalIncome-totalExpense;
+    return'<tr><td><div style="display:flex;align-items:center;gap:8px"><div class="avatar" style="width:28px;height:28px;font-size:11px;background:'+colors[i%4]+';color:'+tc[i%4]+'">'+(u.name?u.name[0]:'?')+'</div><div><div style="font-size:12px;font-weight:600;color:#fff">'+u.name+'</div><div style="font-size:10px;color:var(--text2)">'+(u.email||'—')+'</div></div></div></td><td style="font-size:11px;color:var(--text2)">'+u.username+'</td><td><span class="tag '+(u.role==='Administrator'?'tp':u.role==='Cashier'?'tb':u.role==='Accountant'?'ty':'tgr')+'">'+u.role+'</span></td><td class="pos" style="font-weight:600">'+fmt(totalIncome)+'</td><td class="neg" style="font-weight:600">'+fmt(totalExpense)+'</td><td style="font-weight:700;color:'+(netBalance>=0?'var(--success)':'var(--danger)')+'">'+fmt(netBalance)+'</td><td><span class="tag '+(u.status==='active'?'tg':'tgr')+'">'+u.status+'</span></td><td style="font-size:10px;color:var(--text2)">'+(u.lastLogin||'—')+'</td><td class="tbl-actions"><button class="btn btn-info btn-xs" onclick="openUserModal(\''+u.id+'\')">✏️</button><button class="btn btn-warning btn-xs" onclick="toggleUserStatus(\''+u.id+'\')">'+(u.status==='active'?'🔒':'🔓')+'</button>'+(u.username!=='admin'?'<button class="btn btn-danger btn-xs" onclick="deleteUser(\''+u.id+'\')">🗑️</button>':'')+'</td></tr>';
+  }).join('');
 }
 function openUserModal(id){
   S.editingId.user=id||null;
@@ -2127,6 +2132,15 @@ function computeCashInHand(username){
   var allExpense= getUserExpenseRows(username, null).reduce(function(s,r){ return s+r.amount; }, 0);
   return opening + allIncome - allExpense;
 }
+// Running balance carried forward from all activity strictly BEFORE dateStr —
+// i.e. the "Previous Balance" a daybook shows at the top of a given day, before
+// that day's own receipts/payments are added in.
+function getPreviousBalance(username, dateStr){
+  var opening = getUserOpeningBalance(username);
+  var incomeBefore = getUserIncomeRows(username, null).filter(function(r){ return (r.date||'') < dateStr; }).reduce(function(s,r){ return s+r.amount; }, 0);
+  var expenseBefore = getUserExpenseRows(username, null).filter(function(r){ return (r.date||'') < dateStr; }).reduce(function(s,r){ return s+r.amount; }, 0);
+  return opening + incomeBefore - expenseBefore;
+}
 
 // ── MY DAYBOOK ──
 function initDaybook(){
@@ -2155,14 +2169,14 @@ function backToOwnDaybook(){
 function renderDaybook(){
   var username = S.daybookViewUser || S.user.username;
   var dateStr = document.getElementById('daybook-date').value || today();
-  var opening = getUserOpeningBalance(username);
+  var previousBalance = getPreviousBalance(username, dateStr);
   var incomeRows = getUserIncomeRows(username, dateStr);
   var expenseRows = getUserExpenseRows(username, dateStr);
   var dayIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
   var dayExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
-  var cashInHand = computeCashInHand(username);
+  var cashInHand = previousBalance + dayIncome - dayExpense;
 
-  var oe=document.getElementById('dbOpening'); if(oe) oe.textContent=fmt(opening);
+  var oe=document.getElementById('dbOpening'); if(oe) oe.textContent=fmt(previousBalance);
   var ie=document.getElementById('dbIncome'); if(ie) ie.textContent=fmt(dayIncome);
   var ee=document.getElementById('dbExpense'); if(ee) ee.textContent=fmt(dayExpense);
   var ce=document.getElementById('dbCashInHand'); if(ce){ ce.textContent=fmt(cashInHand); ce.style.color=cashInHand>=0?'var(--success)':'var(--danger)'; }
@@ -2185,12 +2199,12 @@ function printDaybook(){
   var username = S.daybookViewUser || S.user.username;
   var u = DB.users.find(function(x){ return x.username===username; });
   var dateStr = document.getElementById('daybook-date').value || today();
-  var opening = getUserOpeningBalance(username);
+  var previousBalance = getPreviousBalance(username, dateStr);
   var incomeRows = getUserIncomeRows(username, dateStr);
   var expenseRows = getUserExpenseRows(username, dateStr);
   var dayIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
   var dayExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
-  var cashInHand = computeCashInHand(username);
+  var cashInHand = previousBalance + dayIncome - dayExpense;
   var co = S.settings.company;
 
   var incHtml = incomeRows.length ? incomeRows.map(function(r,i){
@@ -2225,7 +2239,7 @@ function printDaybook(){
     +'<span>Printed: <b>'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+'</b></span>'
     +'</div>'
     +'<div class="cards">'
-    +'<div class="card"><div class="lbl">Opening Balance</div><div class="val">'+fmt(opening)+'</div></div>'
+    +'<div class="card"><div class="lbl">Previous Balance</div><div class="val">'+fmt(previousBalance)+'</div></div>'
     +'<div class="card"><div class="lbl">Day Income</div><div class="val" style="color:#10b981">'+fmt(dayIncome)+'</div></div>'
     +'<div class="card"><div class="lbl">Day Expense</div><div class="val" style="color:#ef4444">'+fmt(dayExpense)+'</div></div>'
     +'<div class="card"><div class="lbl">Cash In Hand</div><div class="val" style="color:'+(cashInHand>=0?'#10b981':'#ef4444')+'">'+fmt(cashInHand)+'</div></div>'
@@ -2279,7 +2293,7 @@ function printUserDaybookAdmin(username){
   var prevView = S.daybookViewUser;
   S.daybookViewUser = username;
   var d=document.getElementById('daybook-date');
-  if(d && !d.value) d.value = today();
+  if(d) d.value = today();
   printDaybook();
   S.daybookViewUser = prevView;
 }
