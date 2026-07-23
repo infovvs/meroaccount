@@ -244,6 +244,15 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
             </div>
           </div>
         </div>
+        <div class="card" id="dashUsersOverviewCard" style="display:none">
+          <div class="card-head"><h3>👥 All Users — Income &amp; Expense Overview (Today)</h3><button class="btn btn-ghost btn-sm" onclick="nav('usersCashBook')">View Full Cash Book →</button></div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>User</th><th>Today's Income</th><th>Today's Expense</th><th>Today's Net</th><th>Cash In Hand</th></tr></thead>
+              <tbody id="dashUsersOverviewTable"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- CASH RECEIPT -->
@@ -613,6 +622,10 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
             </div>
           </div>
           <div id="ieFormBody" style="display:none">
+            <div class="tab-bar" style="margin-bottom:12px">
+              <div class="tab active" id="ieModeTabSimple" onclick="setIEEntryMode('simple',this)">💰 Simple Entry</div>
+              <div class="tab" id="ieModeTabItemized" onclick="setIEEntryMode('itemized',this)">📋 Itemized (Multi-Item)</div>
+            </div>
             <div class="grid2">
               <div class="fg"><label>Entry Type</label>
                 <select id="ie-type" onchange="updateIEForm()">
@@ -634,7 +647,8 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
               <div class="fg"><label id="ie-party-label">Party / Source</label>
                 <input id="ie-party" placeholder="Enter name or source">
               </div>
-              <div class="fg"><label>Amount (₹)</label><input id="ie-amount" type="number" placeholder="0.00" min="0"></div>
+              <div class="fg" id="ie-amount-simple-wrap"><label>Amount (₹)</label><input id="ie-amount" type="number" placeholder="0.00" min="0"></div>
+              <div class="fg" id="ie-amount-itemized-wrap" style="display:none"><label>Total Amount</label><div id="ie-itemsTotalDisplay" style="padding:8px 11px;background:var(--bg);border:1px solid var(--border2);border-radius:8px;font-size:14px;font-weight:700;color:var(--success)">₹ 0</div></div>
               <div class="fg"><label>Payment Mode</label>
                 <select id="ie-mode"><option>Cash</option><option>Cheque</option><option>Bank Transfer</option><option>UPI</option><option>DD</option><option>Other</option></select>
               </div>
@@ -642,7 +656,18 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
                 <textarea id="ie-narration" rows="2" placeholder="Enter details..."></textarea>
               </div>
             </div>
-            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:4px">
+            <!-- Itemized (invoice-style) line items -->
+            <div id="ieItemsSection" style="display:none">
+              <div class="sec-label">📋 Line Items</div>
+              <div id="ieItemsContainer">
+                <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 28px;gap:6px;margin-bottom:6px;font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px">
+                  <span>Description</span><span>Qty</span><span>Rate (₹)</span><span>Amount</span><span></span>
+                </div>
+                <div id="ieItems"></div>
+              </div>
+              <button class="btn btn-ghost btn-sm" onclick="addIEItem()" style="margin-top:6px">+ Add Item</button>
+            </div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px">
               <button class="btn btn-success" onclick="saveIEEntry()" id="ieSaveBtn">💾 Save Entry</button>
               <button class="btn btn-primary" onclick="printIEVoucher()">🖨️ Print Voucher</button>
             </div>
@@ -1120,7 +1145,7 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxUD72bSo5yLfWWaDyyXzqLSx
 // ═══════════════════════════════════════════════════════════
 
 var DB={parties:[],users:[],cashReceipts:[],partyPayments:[],miscIncome:[],blacklist:[],notes:[],messages:[],settings:[],purchases:[],invoices:[]};
-var S={user:null,settings:{company:{name:'',short:'',reg:'',gst:'',addr1:'',addr2:'',phone:'',mobile:'',email:'',web:'',header:'',footer:''},currency:{code:'INR',symbol:'₹',name:'Indian Rupee'},voucher:{crPre:'CR',ppPre:'PP',miPre:'MI',pad:4,copies:2},feeCats:['Tuition Fee','Exam Fee','Transport Fee','Library Fee','Lab Fee','Sports Fee','Hostel Fee','Miscellaneous']},editingId:{cr:null,pp:null,mi:null,ie:null,purchase:null,invoice:null,party:null,user:null,note:null,bl:null},activeChatUser:'',daybookViewUser:null,printedCount:parseInt(localStorage.getItem('eap_prints')||'0')};
+var S={user:null,settings:{company:{name:'',short:'',reg:'',gst:'',addr1:'',addr2:'',phone:'',mobile:'',email:'',web:'',header:'',footer:''},currency:{code:'INR',symbol:'₹',name:'Indian Rupee'},voucher:{crPre:'CR',ppPre:'PP',miPre:'MI',pad:4,copies:2},feeCats:['Tuition Fee','Exam Fee','Transport Fee','Library Fee','Lab Fee','Sports Fee','Hostel Fee','Miscellaneous']},editingId:{cr:null,pp:null,mi:null,ie:null,purchase:null,invoice:null,party:null,user:null,note:null,bl:null},activeChatUser:'',daybookViewUser:null,ieEntryMode:'simple',printedCount:parseInt(localStorage.getItem('eap_prints')||'0')};
 var ALL_PERMS=[{key:'cash_receipt',label:'Cash Receipt'},{key:'party_payment',label:'Party Payment'},{key:'misc_income',label:'Misc Income'},{key:'view_reports',label:'View Reports'},{key:'parties',label:'Party Master'},{key:'manage_users',label:'Manage Users'},{key:'approvals',label:'Approvals'},{key:'blacklist',label:'Blacklist'},{key:'notes',label:'Notes'},{key:'settings',label:'Settings'}];
 var CURRENCIES=[{code:'INR',name:'Indian Rupee',symbol:'₹',flag:'🇮🇳'},{code:'USD',name:'US Dollar',symbol:'$',flag:'🇺🇸'},{code:'EUR',name:'Euro',symbol:'€',flag:'🇪🇺'},{code:'GBP',name:'British Pound',symbol:'£',flag:'🇬🇧'},{code:'NPR',name:'Nepali Rupee',symbol:'रू',flag:'🇳🇵'},{code:'AED',name:'UAE Dirham',symbol:'د.إ',flag:'🇦🇪'},{code:'LKR',name:'Sri Lankan Rupee',symbol:'Rs',flag:'🇱🇰'},{code:'BDT',name:'Bangladeshi Taka',symbol:'৳',flag:'🇧🇩'}];
 
@@ -1394,7 +1419,7 @@ function renderDashboard(){
   se('dashUsers',DB.users.filter(function(u){return u.status==='active'}).length);
   se('dashBL',DB.blacklist.filter(function(b){return b.status==='active'}).length);
   se('dashPrinted',S.printedCount);se('dashTodayR',DB.cashReceipts.filter(function(r){return r.date===today()}).length);
-  buildDashChart();buildIncomeBreakdown();renderDashTxns();renderDashApprovals();
+  buildDashChart();buildIncomeBreakdown();renderDashTxns();renderDashApprovals();renderDashUsersOverview();
 }
 function buildDashChart(){
   var el=document.getElementById('dashChart');if(!el)return;
@@ -1424,6 +1449,29 @@ function renderDashApprovals(){
   var pending=DB.partyPayments.filter(function(p){return p.status==='pending'&&(canApprove||p.submittedBy===S.user.username);});
   if(!pending.length){el.innerHTML='<div class="empty">No pending approvals ✓</div>';return}
   el.innerHTML=pending.slice(0,3).map(function(p){return'<div style="background:var(--warning2);border:1px solid rgba(245,158,11,.25);border-radius:8px;padding:8px 11px;margin-bottom:6px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">📋</span><div style="flex:1"><div style="font-size:12px;font-weight:600;color:#fff">'+p.no+'</div><div style="font-size:10px;color:var(--text2)">'+p.partyName+' · '+fmt(parseFloat(p.amount||0))+'</div></div>'+(hasPerm('approvals')?'<button class="btn btn-success btn-xs" onclick="approvePayment(\''+p.id+'\')">✓</button>':'')+'</div>'}).join('');
+}
+
+function renderDashUsersOverview(){
+  var card=document.getElementById('dashUsersOverviewCard');if(!card)return;
+  var isAdmin=S.user&&S.user.role==='Administrator';
+  if(!isAdmin){card.style.display='none';return}
+  card.style.display='block';
+  var el=document.getElementById('dashUsersOverviewTable');if(!el)return;
+  var td=today();
+  var rows=DB.users.map(function(u){
+    var incToday=getUserIncomeRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
+    var expToday=getUserExpenseRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
+    var cash=computeCashInHand(u.username);
+    return {name:u.name,username:u.username,inc:incToday,exp:expToday,net:incToday-expToday,cash:cash};
+  });
+  if(!rows.length){el.innerHTML='<tr><td colspan="5"><div class="empty">No users found</div></td></tr>';return}
+  el.innerHTML=rows.map(function(r){
+    return '<tr><td><div style="display:flex;align-items:center;gap:8px"><div class="avatar" style="width:24px;height:24px;font-size:10px;background:var(--primary3);color:var(--primary)">'+(r.name?r.name[0]:'?')+'</div><div style="font-size:12px;font-weight:600;color:#fff">'+r.name+'</div></div></td>'
+      +'<td class="pos" style="font-weight:600">'+fmt(r.inc)+'</td>'
+      +'<td class="neg" style="font-weight:600">'+fmt(r.exp)+'</td>'
+      +'<td style="font-weight:600;color:'+(r.net>=0?'var(--success)':'var(--danger)')+'">'+fmt(r.net)+'</td>'
+      +'<td style="font-weight:700;color:'+(r.cash>=0?'var(--success)':'var(--danger)')+'">'+fmt(r.cash)+'</td></tr>';
+  }).join('');
 }
 
 // ── CASH RECEIPT ──
@@ -1564,10 +1612,75 @@ function renderIETable(){
 }
 function toggleIEForm(){var b=document.getElementById('ieFormBody');var btn=document.getElementById('ieToggleBtn');if(!b)return;if(b.style.display==='none'){b.style.display='block';btn.textContent='▲ Hide Form';document.getElementById('ie-date').value=today()}else{b.style.display='none';btn.textContent='▼ Show Form'}}
 function updateIEForm(){var t=document.getElementById('ie-type').value;var lbl=document.getElementById('ie-party-label');if(lbl)lbl.textContent=t==='Income'?'Received From':'Paid To'}
+// ── IE ITEMIZED ENTRY (invoice-style multi-item) ──
+var ieItems = [];
+function setIEEntryMode(mode, el){
+  S.ieEntryMode = mode;
+  document.getElementById('ieModeTabSimple').classList.toggle('active', mode==='simple');
+  document.getElementById('ieModeTabItemized').classList.toggle('active', mode==='itemized');
+  document.getElementById('ie-amount-simple-wrap').style.display = mode==='simple' ? '' : 'none';
+  document.getElementById('ie-amount-itemized-wrap').style.display = mode==='itemized' ? '' : 'none';
+  document.getElementById('ieItemsSection').style.display = mode==='itemized' ? 'block' : 'none';
+  if(mode==='itemized' && ieItems.length===0){ addIEItem(); }
+}
+function addIEItem(){
+  ieItems.push({ id: uid(), desc:'', qty:1, rate:0, amt:0 });
+  renderIEItems();
+}
+function removeIEItem(id){
+  ieItems = ieItems.filter(function(x){ return x.id!==id; });
+  renderIEItems();
+  calcIEItemsTotal();
+}
+function renderIEItems(){
+  var el = document.getElementById('ieItems'); if(!el) return;
+  el.innerHTML = ieItems.map(function(item){
+    return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 28px;gap:6px;margin-bottom:5px">'
+      +'<input value="'+item.desc+'" placeholder="Description" style="font-size:12px;padding:5px 8px" oninput="updateIEItem(\''+item.id+'\',\'desc\',this.value)">'
+      +'<input type="number" value="'+item.qty+'" min="1" style="font-size:12px;padding:5px 8px;text-align:right" oninput="updateIEItem(\''+item.id+'\',\'qty\',this.value)">'
+      +'<input type="number" value="'+item.rate+'" min="0" style="font-size:12px;padding:5px 8px;text-align:right" placeholder="0.00" oninput="updateIEItem(\''+item.id+'\',\'rate\',this.value)">'
+      +'<div style="padding:5px 8px;background:var(--bg);border:1px solid var(--border2);border-radius:8px;font-size:12px;font-weight:600;color:var(--success);text-align:right" id="ieitemamt-'+item.id+'">'+fmt(item.amt)+'</div>'
+      +'<button class="btn btn-danger btn-xs btn-icon" onclick="removeIEItem(\''+item.id+'\')" style="align-self:center">✕</button>'
+      +'</div>';
+  }).join('');
+}
+function updateIEItem(id, field, val){
+  var item = ieItems.find(function(x){ return x.id===id; }); if(!item) return;
+  if(field==='qty'||field==='rate') item[field] = parseFloat(val)||0; else item[field] = val;
+  item.amt = (item.qty||0) * (item.rate||0);
+  var amtEl = document.getElementById('ieitemamt-'+id);
+  if(amtEl) amtEl.textContent = fmt(item.amt);
+  calcIEItemsTotal();
+}
+function calcIEItemsTotal(){
+  var sub = ieItems.reduce(function(s,r){ return s + (r.amt||0); }, 0);
+  var d = document.getElementById('ie-itemsTotalDisplay'); if(d) d.textContent = fmt(sub);
+  return sub;
+}
+function buildIEItemsNarration(){
+  var lines = ieItems.filter(function(i){ return i.desc && i.amt>0; }).map(function(i){
+    return i.desc+' (x'+i.qty+' @ '+fmt(i.rate)+' = '+fmt(i.amt)+')';
+  });
+  return lines.join('; ');
+}
+
 function saveIEEntry(){
-  var type=document.getElementById('ie-type').value;var amt=parseFloat(document.getElementById('ie-amount').value);var party=document.getElementById('ie-party').value.trim();
+  var type=document.getElementById('ie-type').value;var party=document.getElementById('ie-party').value.trim();
+  var isItemized = S.ieEntryMode==='itemized';
+  var amt;
+  if(isItemized){
+    if(ieItems.length===0||ieItems.every(function(i){return !i.desc||i.amt<=0;})){toast('Add at least one item','error');return}
+    amt = calcIEItemsTotal();
+  } else {
+    amt = parseFloat(document.getElementById('ie-amount').value);
+  }
   if(!party){toast('Enter party / source name','error');return}if(!amt||amt<=0){toast('Enter valid amount','error');return}
-  var isEdit=!!S.editingId.ie;var cat=document.getElementById('ie-cat').value;var mode=document.getElementById('ie-mode').value;var date=document.getElementById('ie-date').value;var narration=document.getElementById('ie-narration').value;
+  var isEdit=!!S.editingId.ie;var cat=document.getElementById('ie-cat').value;var mode=document.getElementById('ie-mode').value;var date=document.getElementById('ie-date').value;
+  var narration=document.getElementById('ie-narration').value;
+  if(isItemized){
+    var itemsSummary=buildIEItemsNarration();
+    narration = itemsSummary + (narration?(' — '+narration):'');
+  }
   var rec;
   if(type==='Income'){
     if(isEdit){rec=DB.miscIncome.find(function(x){return x.id===S.editingId.ie});if(rec){rec.source=cat;rec.from=party;rec.amount=amt;rec.mode=mode;rec.date=date;rec.narration=narration}}
@@ -1591,6 +1704,7 @@ function editIERow(type,id){
   document.getElementById('ie-cat').value=rec.cat||rec.source||'Other';document.getElementById('ie-party').value=rec.partyName||rec.from||'';
   document.getElementById('ie-amount').value=rec.amount||0;document.getElementById('ie-mode').value=rec.mode||'Cash';
   document.getElementById('ie-date').value=rec.date||today();document.getElementById('ie-narration').value=rec.narration||'';
+  ieItems=[];var st=document.getElementById('ieModeTabSimple');setIEEntryMode('simple',st);
   nav('incomeExpense');window.scrollTo(0,0);
 }
 function deleteIERow(type,id){
@@ -1666,7 +1780,14 @@ function printIEReport(){
   w.document.close();
 }
 function clearIEFilters(){['ieTypeFilter','ieCatFilter','ieMonthFilter','ieYearFilter','ieUserFilter','ieBsYearFilter','ieBsMonthFilter','ieSearch'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});renderIETable()}
-function resetIEForm(){S.editingId.ie=null;document.getElementById('ieFormTitle').textContent='➕ Add Income / Expense Entry';document.getElementById('ieCancelBtn').style.display='none';document.getElementById('ieSaveBtn').textContent='💾 Save Entry';['ie-party','ie-amount','ie-narration'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('ie-type').value='Income';document.getElementById('ie-mode').value='Cash';document.getElementById('ie-date').value=today();updateIEForm()}
+function resetIEForm(){
+  S.editingId.ie=null;document.getElementById('ieFormTitle').textContent='➕ Add Income / Expense Entry';document.getElementById('ieCancelBtn').style.display='none';document.getElementById('ieSaveBtn').textContent='💾 Save Entry';
+  ['ie-party','ie-amount','ie-narration'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});
+  document.getElementById('ie-type').value='Income';document.getElementById('ie-mode').value='Cash';document.getElementById('ie-date').value=today();updateIEForm();
+  ieItems=[];
+  var st=document.getElementById('ieModeTabSimple');
+  setIEEntryMode('simple', st);
+}
 
 // ── PARTY LEDGER ──
 function initLedger(){var e1=document.getElementById('ledgerFrom');if(e1&&!e1.value)e1.value=new Date(new Date().setMonth(0,1)).toISOString().split('T')[0];var e2=document.getElementById('ledgerTo');if(e2&&!e2.value)e2.value=today()}
@@ -2914,7 +3035,7 @@ var BS_MONTHS_DATA = [
   [2080,[31,31,31,32,31,30,30,30,29,30,29,31]],
   [2081,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2082,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2083,[31,31,32,31,31,30,30,30,29,29,30,31]],
+  [2083,[31,32,32,31,31,30,30,30,29,29,30,31]],
   [2084,[31,31,31,32,31,30,30,30,29,30,29,31]],
   [2085,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2086,[31,31,32,32,31,30,30,29,30,29,30,30]],
