@@ -1070,7 +1070,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
       <div class="fg"><label>Full Name</label><input id="um-name" placeholder="Full name"></div>
       <div class="fg"><label>Username</label><input id="um-user" placeholder="Login username"></div>
       <div class="fg" style="position:relative"><label>Password</label><input id="um-pass" type="password" placeholder="Password"><span onclick="togglePass('um-pass',this)" style="position:absolute;right:10px;top:28px;cursor:pointer;font-size:13px;color:var(--text3)">👁</span></div>
-      <div class="fg"><label>Role</label><select id="um-role"><option value="Administrator">Administrator</option><option value="Cashier">Cashier</option><option value="Accountant">Accountant</option><option value="Viewer">Viewer (Read-only)</option></select></div>
+      <div class="fg"><label>Role</label><select id="um-role" onchange="applyRoleDefaultPerms()"><option value="Administrator">Administrator</option><option value="Cashier">Cashier</option><option value="Accountant">Accountant</option><option value="Viewer">Viewer (Read-only)</option></select></div>
       <div class="fg"><label>Email</label><input id="um-email" type="email" placeholder="Email"></div>
       <div class="fg"><label>Mobile</label><input id="um-mobile" placeholder="Mobile"></div>
       <div class="fg"><label>Status</label><select id="um-status"><option value="active">Active</option><option value="inactive">Inactive</option></select></div>
@@ -1147,12 +1147,32 @@ var GAS_URL = 'https://script.google.com/macros/s/AKfycbxUD72bSo5yLfWWaDyyXzqLSx
 var DB={parties:[],users:[],cashReceipts:[],partyPayments:[],miscIncome:[],blacklist:[],notes:[],messages:[],settings:[],purchases:[],invoices:[]};
 var S={user:null,settings:{company:{name:'',short:'',reg:'',gst:'',addr1:'',addr2:'',phone:'',mobile:'',email:'',web:'',header:'',footer:''},currency:{code:'INR',symbol:'₹',name:'Indian Rupee'},voucher:{crPre:'CR',ppPre:'PP',miPre:'MI',pad:4,copies:2},feeCats:['Tuition Fee','Exam Fee','Transport Fee','Library Fee','Lab Fee','Sports Fee','Hostel Fee','Miscellaneous']},editingId:{cr:null,pp:null,mi:null,ie:null,purchase:null,invoice:null,party:null,user:null,note:null,bl:null},activeChatUser:'',daybookViewUser:null,ieEntryMode:'simple',printedCount:parseInt(localStorage.getItem('eap_prints')||'0')};
 var ALL_PERMS=[{key:'cash_receipt',label:'Cash Receipt'},{key:'party_payment',label:'Party Payment'},{key:'misc_income',label:'Misc Income'},{key:'view_reports',label:'View Reports'},{key:'parties',label:'Party Master'},{key:'manage_users',label:'Manage Users'},{key:'approvals',label:'Approvals'},{key:'blacklist',label:'Blacklist'},{key:'notes',label:'Notes'},{key:'settings',label:'Settings'}];
+var ROLE_DEFAULT_PERMS={
+  Administrator:['cash_receipt','party_payment','misc_income','view_reports','parties','manage_users','approvals','blacklist','notes','settings'],
+  Accountant:['cash_receipt','party_payment','misc_income','view_reports','parties','blacklist','notes'],
+  Cashier:['cash_receipt','view_reports'],
+  Viewer:['view_reports']
+};
+function applyRoleDefaultPerms(){
+  var role=document.getElementById('um-role').value;
+  var defaults=ROLE_DEFAULT_PERMS[role]||[];
+  ALL_PERMS.forEach(function(p){
+    var cb=document.getElementById('perm-'+p.key);
+    if(cb) cb.checked = defaults.indexOf(p.key)>-1;
+  });
+}
 var CURRENCIES=[{code:'INR',name:'Indian Rupee',symbol:'₹',flag:'🇮🇳'},{code:'USD',name:'US Dollar',symbol:'$',flag:'🇺🇸'},{code:'EUR',name:'Euro',symbol:'€',flag:'🇪🇺'},{code:'GBP',name:'British Pound',symbol:'£',flag:'🇬🇧'},{code:'NPR',name:'Nepali Rupee',symbol:'रू',flag:'🇳🇵'},{code:'AED',name:'UAE Dirham',symbol:'د.إ',flag:'🇦🇪'},{code:'LKR',name:'Sri Lankan Rupee',symbol:'Rs',flag:'🇱🇰'},{code:'BDT',name:'Bangladeshi Taka',symbol:'৳',flag:'🇧🇩'}];
 
 // ── API ──
 function apiGet(p){var u=GAS_URL+'?'+Object.keys(p).map(function(k){return k+'='+encodeURIComponent(p[k])}).join('&');return fetch(u).then(function(r){return r.json()})}
 function apiPost(b){return fetch(GAS_URL,{method:'POST',body:JSON.stringify(b)}).then(function(r){return r.json()})}
-function dbUpsert(sheet,data){if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});return apiPost({action:'upsert',sheet:sheet,data:data}).then(function(r){if(r.error)throw new Error(r.error);return r})}
+var _recentEdits = {};
+function markRecentEdit(id){ if(id) _recentEdits[id] = Date.now(); }
+function dbUpsert(sheet,data){
+  markRecentEdit(data && data.id);
+  if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});
+  return apiPost({action:'upsert',sheet:sheet,data:data}).then(function(r){if(r.error)throw new Error(r.error);return r});
+}
 function dbDelete(sheet,id){if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});return apiPost({action:'delete',sheet:sheet,id:id}).then(function(r){if(r.error)throw new Error(r.error);return r})}
 // Tracks which record IDs have ever been confirmed present on the server, per table.
 // A record is only ever dropped from the local copy once we KNOW the server had it
@@ -1166,21 +1186,43 @@ try{
 function _persistSeenIds(){
   try{ localStorage.setItem('eap_serverSeen', JSON.stringify(_serverSeenIds)); }catch(e){}
 }
+var RECENT_EDIT_WINDOW = 3*60*1000; // 3 minutes — generous safety margin for slow Google Sheets propagation
 function mergeArr(key, localArr, remoteArr){
   var seen = _serverSeenIds[key] || (_serverSeenIds[key]={});
+  var localById = {};
+  localArr.forEach(function(r){ if(r.id) localById[r.id]=r; });
+  var now = Date.now();
+
+  // Start from the server's list, but if we have a locally-newer edit of the SAME
+  // record still within its propagation grace window, keep our local version instead
+  // of the (possibly stale) one the server just returned — this is what prevented a
+  // just-saved edit from being silently reverted by the next auto-sync.
+  var result = remoteArr.map(function(r){
+    if(r.id) seen[r.id]=true;
+    var editedAt = r.id ? _recentEdits[r.id] : null;
+    if(r.id && localById[r.id] && editedAt && (now-editedAt)<RECENT_EDIT_WINDOW){
+      return localById[r.id];
+    }
+    return r;
+  });
+
   var remoteIds = {};
-  remoteArr.forEach(function(r){ if(r.id){ remoteIds[r.id]=true; seen[r.id]=true; } });
+  remoteArr.forEach(function(r){ if(r.id) remoteIds[r.id]=true; });
   var pending = localArr.filter(function(r){
     if(!r.id || remoteIds[r.id]) return false;
+    var editedAt = _recentEdits[r.id];
     // Never confirmed on the server yet — could still be propagating (or a failed/slow
     // save). Keep it locally indefinitely until it shows up remotely or is explicitly
     // deleted by the user (dbDelete already removes it from the local array directly).
     if(!seen[r.id]) return true;
-    // Was confirmed present before and is now gone from the server response — a real
-    // deletion (by this user or another device). Safe to drop.
+    // Confirmed before, missing from this fetch, but we edited it very recently — most
+    // likely just a race between our save and this sync's fetch. Keep it a little longer.
+    if(editedAt && (now-editedAt)<RECENT_EDIT_WINDOW) return true;
+    // Was confirmed present before and is now genuinely gone — a real deletion
+    // (by this user or another device). Safe to drop.
     return false;
   });
-  return remoteArr.concat(pending);
+  return result.concat(pending);
 }
 var _syncInFlight = false;
 function syncAll(){
@@ -1363,7 +1405,12 @@ function doLogin(){
   document.getElementById('topAvatar').textContent=S.user.name[0];
   buildNavMenu();initApp();nav('dashboard');loadLogoFromStorage();
   toast('Welcome, '+S.user.name+'! 👋','success');
-  if(GAS_URL&&GAS_URL.length>10)setInterval(function(){syncAll().catch(function(){})},30000);
+  // NOTE: automatic periodic background sync is intentionally disabled. Every entry
+  // (save/edit/delete) already writes straight to Google Sheets the moment it happens —
+  // there is no need for a recurring full re-fetch, and that re-fetch was the source of
+  // entries appearing to "auto-erase" when a slow write raced against it. Data still stays
+  // up to date across devices via the manual 🔄 refresh button on every page, and a fresh
+  // pull happens automatically on login.
 }
 function doLogout(){
   document.getElementById('mainApp').style.display='none';
@@ -2063,7 +2110,7 @@ function renderUsersTable(){
 }
 function openUserModal(id){
   S.editingId.user=id||null;
-  var perms=[];if(id){var u=DB.users.find(function(x){return x.id===id});if(u)perms=typeof u.perms==='string'?u.perms.split(','):u.perms||[]}else{perms=['cash_receipt','view_reports']}
+  var perms=[];if(id){var u=DB.users.find(function(x){return x.id===id});if(u)perms=typeof u.perms==='string'?u.perms.split(','):u.perms||[]}else{perms=ROLE_DEFAULT_PERMS['Cashier']}
   document.getElementById('permCheck').innerHTML=ALL_PERMS.map(function(p){return'<div class="perm-item"><input type="checkbox" id="perm-'+p.key+'"'+(perms.indexOf(p.key)>-1?' checked':'')+'><label for="perm-'+p.key+'" style="cursor:pointer">'+p.label+'</label></div>'}).join('');
   if(id){var u=DB.users.find(function(x){return x.id===id});if(!u)return;document.getElementById('userModalTitle').textContent='✏️ Edit User';document.getElementById('userSaveBtn').textContent='💾 Update User';document.getElementById('um-name').value=u.name;document.getElementById('um-user').value=u.username;document.getElementById('um-pass').value='';document.getElementById('um-pass').placeholder='Leave blank to keep current password';document.getElementById('um-role').value=u.role;document.getElementById('um-email').value=u.email||'';document.getElementById('um-mobile').value=u.mobile||'';document.getElementById('um-status').value=u.status||'active';document.getElementById('um-dept').value=u.dept||'Accounts';document.getElementById('um-openingBalance').value=u.openingBalance||0}
   else{document.getElementById('userModalTitle').textContent='➕ Add New User';document.getElementById('userSaveBtn').textContent='💾 Create User';['um-name','um-user','um-email','um-mobile'].forEach(function(i){var e=document.getElementById(i);if(e)e.value=''});document.getElementById('um-pass').value='';document.getElementById('um-pass').placeholder='Set password (required)';document.getElementById('um-role').value='Cashier';document.getElementById('um-status').value='active';document.getElementById('um-openingBalance').value=0}
