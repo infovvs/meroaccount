@@ -849,28 +849,48 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
         </div>
         <div class="grid4" style="margin-bottom:14px">
           <div class="stat" data-icon="🏦"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Previous Balance</div><div class="stat-val" style="font-size:20px" id="dbOpening">₹0</div><div class="stat-lbl">Carried Forward</div></div>
-          <div class="stat" data-icon="💚"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Today's Income</div><div class="stat-val" style="font-size:20px;color:var(--success)" id="dbIncome">₹0</div><div class="stat-lbl">Cash Received</div></div>
-          <div class="stat" data-icon="🔴"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Today's Expense</div><div class="stat-val" style="font-size:20px;color:var(--danger)" id="dbExpense">₹0</div><div class="stat-lbl">Cash Paid Out</div></div>
+          <div class="stat" data-icon="💚"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase" id="dbIncomeLbl">Today's Income</div><div class="stat-val" style="font-size:20px;color:var(--success)" id="dbIncome">₹0</div><div class="stat-lbl">Cash Received</div></div>
+          <div class="stat" data-icon="🔴"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase" id="dbExpenseLbl">Today's Expense</div><div class="stat-val" style="font-size:20px;color:var(--danger)" id="dbExpense">₹0</div><div class="stat-lbl">Cash Paid Out</div></div>
           <div class="stat" data-icon="💰"><div style="font-size:10px;color:var(--text2);margin-bottom:6px;font-weight:600;text-transform:uppercase">Cash In Hand</div><div class="stat-val" style="font-size:20px" id="dbCashInHand">₹0</div><div class="stat-lbl">Current Running Balance</div></div>
         </div>
         <div class="card">
           <div class="card-head">
             <h3>📔 Daybook — <span id="dbBsDate" style="color:var(--primary)"></span></h3>
             <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
-              <input id="daybook-date" type="date" style="width:auto;padding:5px 9px;font-size:11px" onchange="renderDaybook()">
               <button class="btn btn-ghost btn-sm" onclick="syncAll()" title="Refresh">🔄</button>
               <button class="btn btn-primary btn-sm" onclick="printDaybook()">🖨️ Print Daybook</button>
             </div>
           </div>
+          <!-- Date range + filters -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:10px">
+            <div class="fg" style="margin-bottom:0"><label style="font-size:9.5px">From Date</label><input id="daybook-date" type="date" style="width:auto;padding:5px 9px;font-size:11px" onchange="onDaybookFromDateChange()"></div>
+            <div class="fg" style="margin-bottom:0"><label style="font-size:9.5px">To Date</label><input id="daybook-date-to" type="date" style="width:auto;padding:5px 9px;font-size:11px" onchange="renderDaybook()"></div>
+            <div class="fg" style="margin-bottom:0"><label style="font-size:9.5px">Source</label>
+              <select id="db-sourceFilter" style="width:auto;font-size:11px" onchange="renderDaybook()">
+                <option value="">All Sources</option>
+                <option value="Cash Receipt">Cash Receipt</option>
+                <option value="Misc Income">Misc Income</option>
+                <option value="Party Payment">Party Payment</option>
+                <option value="Purchase">Purchase</option>
+              </select>
+            </div>
+            <div class="fg" style="margin-bottom:0"><label style="font-size:9.5px">Category</label>
+              <select id="db-catFilter" style="width:auto;font-size:11px" onchange="renderDaybook()">
+                <option value="">All Categories</option>
+              </select>
+            </div>
+            <div class="fg" style="margin-bottom:0"><label style="font-size:9.5px">Search</label><input id="db-search" placeholder="Party / Voucher..." style="width:140px;padding:5px 9px;font-size:11px" oninput="renderDaybook()"></div>
+            <button class="btn btn-ghost btn-sm" onclick="clearDaybookFilters()" style="align-self:flex-end">✕ Clear</button>
+          </div>
           <div class="sec-label">💚 Income Entries</div>
           <div class="tbl-wrap">
-            <table><thead><tr><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead>
+            <table><thead><tr><th>Date</th><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead>
               <tbody id="dbIncomeTable"></tbody>
             </table>
           </div>
           <div class="sec-label">🔴 Expense Entries</div>
           <div class="tbl-wrap">
-            <table><thead><tr><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead>
+            <table><thead><tr><th>Date</th><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead>
               <tbody id="dbExpenseTable"></tbody>
             </table>
           </div>
@@ -1171,9 +1191,22 @@ function markRecentEdit(id){ if(id) _recentEdits[id] = Date.now(); }
 function dbUpsert(sheet,data){
   markRecentEdit(data && data.id);
   if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});
-  return apiPost({action:'upsert',sheet:sheet,data:data}).then(function(r){if(r.error)throw new Error(r.error);return r});
+  setSyncStatus('syncing');
+  return apiPost({action:'upsert',sheet:sheet,data:data}).then(function(r){
+    if(r.error){ setSyncStatus('offline'); throw new Error(r.error); }
+    setSyncStatus('live');
+    return r;
+  }).catch(function(e){ setSyncStatus('offline'); throw e; });
 }
-function dbDelete(sheet,id){if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});return apiPost({action:'delete',sheet:sheet,id:id}).then(function(r){if(r.error)throw new Error(r.error);return r})}
+function dbDelete(sheet,id){
+  if(!GAS_URL||GAS_URL.length<10)return Promise.resolve({ok:true,offline:true});
+  setSyncStatus('syncing');
+  return apiPost({action:'delete',sheet:sheet,id:id}).then(function(r){
+    if(r.error){ setSyncStatus('offline'); throw new Error(r.error); }
+    setSyncStatus('live');
+    return r;
+  }).catch(function(e){ setSyncStatus('offline'); throw e; });
+}
 // Tracks which record IDs have ever been confirmed present on the server, per table.
 // A record is only ever dropped from the local copy once we KNOW the server had it
 // and it later disappeared (a real deletion) — never just because it hasn't shown up
@@ -1473,6 +1506,14 @@ function buildNavMenu(){
     }
   });el.innerHTML=html;
 }
+function ensureDateInputsDefault(){
+  // Every date field on the page always defaults to today unless the user (or
+  // page logic) has deliberately set something else — so no entry form is ever
+  // left with a blank or stale date needing manual re-selection.
+  document.querySelectorAll('input[type="date"]').forEach(function(el){
+    if(!el.value) el.value = today();
+  });
+}
 function nav(page){
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active')});
   document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active')});
@@ -1480,6 +1521,7 @@ function nav(page){
   var ni=document.getElementById('nav-'+page);if(ni)ni.classList.add('active');
   var titles={dashboard:'📊 Dashboard',cashReceipt:'🧾 Cash Receipt',partyPayment:'💸 Party Payment',miscIncome:'💰 Misc Income',incomeExpense:'📈 Income & Expenses',partyLedger:'📒 Party Ledger',parties:'👤 Party Master',users:'👥 User Management',approvals:'✅ Approvals',blacklist:'🚫 Blacklist',notes:'📝 Notes',messages:'💬 Messages',settings:'⚙️ Settings',purchases:'🛒 Purchase Entry',taxAccount:'🧮 Tax Account',daybook:'📔 My Daybook',usersCashBook:'💼 Users\' Cash Book'};
   document.getElementById('pageTitle').textContent=titles[page]||page;
+  ensureDateInputsDefault();
   var r={dashboard:renderDashboard,cashReceipt:function(){renderCRTable();setCRNo()},partyPayment:function(){renderPPTable();setPPNo()},miscIncome:function(){renderMITable();setMINo()},incomeExpense:renderIETable,partyLedger:initLedger,parties:renderPartiesTable,users:renderUsersTable,approvals:renderApprovalsTable,blacklist:renderBLTable,notes:renderNotes,messages:renderMessages,settings:initSettingsPage,purchases:function(){renderPurchasesTable();var pd=document.getElementById('pur-date');if(pd&&!pd.value)pd.value=today();populatePurchaseVendors()},taxAccount:function(){populateTaxUserFilter();renderTaxAccountTable()},daybook:initDaybook,usersCashBook:renderUsersCashBook,invoices:function(){renderInvoiceTable();initInvoiceForm()}};
   if(r[page])r[page]();
 }
@@ -2197,6 +2239,34 @@ function getUserExpenseRows(username, dateStr){
   rows.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   return rows;
 }
+// Range + filter aware variants used by the Daybook page (From/To date range,
+// Source, Category, Search) — kept separate from the single-date functions above
+// so existing callers (Dashboard overview, Users' Cash Book, User Management) are
+// unaffected.
+function _inRange(dateStr, from, to){
+  if(!dateStr) return false;
+  if(from && dateStr<from) return false;
+  if(to && dateStr>to) return false;
+  return true;
+}
+function getUserIncomeRowsFiltered(username, from, to, source, cat, q){
+  return getUserIncomeRows(username, null).filter(function(r){
+    if(!_inRange(r.date, from, to)) return false;
+    if(source && r.src!==source) return false;
+    if(cat && r.cat!==cat) return false;
+    if(q && !(r.party||'').toLowerCase().includes(q) && !(r.vno||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+function getUserExpenseRowsFiltered(username, from, to, source, cat, q){
+  return getUserExpenseRows(username, null).filter(function(r){
+    if(!_inRange(r.date, from, to)) return false;
+    if(source && r.src!==source) return false;
+    if(cat && r.cat!==cat) return false;
+    if(q && !(r.party||'').toLowerCase().includes(q) && !(r.vno||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
 function computeCashInHand(username){
   var opening   = getUserOpeningBalance(username);
   var allIncome = getUserIncomeRows(username, null).reduce(function(s,r){ return s+r.amount; }, 0);
@@ -2217,8 +2287,26 @@ function getPreviousBalance(username, dateStr){
 function initDaybook(){
   S.daybookViewUser = S.user.username;
   var d = document.getElementById('daybook-date');
+  var dTo = document.getElementById('daybook-date-to');
   if(d && !d.value) d.value = today();
+  if(dTo && !dTo.value) dTo.value = today();
   updateDaybookBanner();
+  renderDaybook();
+}
+function onDaybookFromDateChange(){
+  // Keep "To" in sync with "From" by default so a single date pick still behaves
+  // like a normal one-day daybook, unless the user has deliberately widened "To".
+  var d = document.getElementById('daybook-date');
+  var dTo = document.getElementById('daybook-date-to');
+  if(d && dTo && dTo.value < d.value) dTo.value = d.value;
+  renderDaybook();
+}
+function clearDaybookFilters(){
+  document.getElementById('db-sourceFilter').value='';
+  document.getElementById('db-catFilter').value='';
+  document.getElementById('db-search').value='';
+  var d=document.getElementById('daybook-date'); if(d) d.value=today();
+  var dTo=document.getElementById('daybook-date-to'); if(dTo) dTo.value=today();
   renderDaybook();
 }
 function updateDaybookBanner(){
@@ -2237,60 +2325,95 @@ function backToOwnDaybook(){
   updateDaybookBanner();
   renderDaybook();
 }
+function buildDaybookCatFilter(rows){
+  var el=document.getElementById('db-catFilter'); if(!el) return;
+  var cur=el.value;
+  var cats=rows.map(function(r){return r.cat;}).filter(function(v,i,a){return v&&a.indexOf(v)===i;}).sort();
+  el.innerHTML='<option value="">All Categories</option>'+cats.map(function(c){return'<option value="'+c+'"'+(c===cur?' selected':'')+'>'+c+'</option>';}).join('');
+}
 function renderDaybook(){
   var username = S.daybookViewUser || S.user.username;
-  var dateStr = document.getElementById('daybook-date').value || today();
-  var previousBalance = getPreviousBalance(username, dateStr);
-  var incomeRows = getUserIncomeRows(username, dateStr);
-  var expenseRows = getUserExpenseRows(username, dateStr);
-  var dayIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
-  var dayExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
-  var cashInHand = previousBalance + dayIncome - dayExpense;
+  var fromDate = document.getElementById('daybook-date').value || today();
+  var toDate = document.getElementById('daybook-date-to').value || fromDate;
+  if(toDate < fromDate) toDate = fromDate;
+  var source = document.getElementById('db-sourceFilter').value || '';
+  var cat = document.getElementById('db-catFilter').value || '';
+  var q = (document.getElementById('db-search').value || '').toLowerCase();
+  var isSingleDay = fromDate===toDate;
+
+  var previousBalance = getPreviousBalance(username, fromDate);
+  var allIncomeRows = getUserIncomeRowsFiltered(username, fromDate, toDate, '', '', '');
+  var allExpenseRows = getUserExpenseRowsFiltered(username, fromDate, toDate, '', '', '');
+  buildDaybookCatFilter(allIncomeRows.concat(allExpenseRows));
+
+  var incomeRows = getUserIncomeRowsFiltered(username, fromDate, toDate, source, cat, q);
+  var expenseRows = getUserExpenseRowsFiltered(username, fromDate, toDate, source, cat, q);
+  var periodIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
+  var periodExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
+  var cashInHand = previousBalance + periodIncome - periodExpense;
+
+  var incLbl=document.getElementById('dbIncomeLbl'); if(incLbl) incLbl.textContent = isSingleDay ? "Today's Income" : 'Period Income';
+  var expLbl=document.getElementById('dbExpenseLbl'); if(expLbl) expLbl.textContent = isSingleDay ? "Today's Expense" : 'Period Expense';
 
   var oe=document.getElementById('dbOpening'); if(oe) oe.textContent=fmt(previousBalance);
-  var ie=document.getElementById('dbIncome'); if(ie) ie.textContent=fmt(dayIncome);
-  var ee=document.getElementById('dbExpense'); if(ee) ee.textContent=fmt(dayExpense);
+  var ie=document.getElementById('dbIncome'); if(ie) ie.textContent=fmt(periodIncome);
+  var ee=document.getElementById('dbExpense'); if(ee) ee.textContent=fmt(periodExpense);
   var ce=document.getElementById('dbCashInHand'); if(ce){ ce.textContent=fmt(cashInHand); ce.style.color=cashInHand>=0?'var(--success)':'var(--danger)'; }
-  var bsEl=document.getElementById('dbBsDate'); if(bsEl) bsEl.textContent=fmtBs(dateStr);
+  var bsEl=document.getElementById('dbBsDate'); if(bsEl) bsEl.textContent = isSingleDay ? fmtBs(fromDate) : (fmtBs(fromDate)+' – '+fmtBs(toDate));
 
   var incEl=document.getElementById('dbIncomeTable');
   if(incEl){
     incEl.innerHTML = incomeRows.length ? incomeRows.map(function(r){
-      return '<tr><td style="font-weight:600;color:var(--primary);font-size:11px">'+r.vno+'</td><td><span class="tag tb">'+r.src+'</span></td><td>'+r.party+'</td><td style="font-size:11px;color:var(--text2)">'+r.cat+'</td><td style="font-size:10.5px">'+r.mode+'</td><td class="pos" style="font-weight:600">'+fmt(r.amount)+'</td></tr>';
-    }).join('') : '<tr><td colspan="6"><div class="empty">No income entries for this date</div></td></tr>';
+      return '<tr><td style="font-size:10.5px;white-space:nowrap">'+fmtDate(r.date)+'</td><td style="font-weight:600;color:var(--primary);font-size:11px">'+r.vno+'</td><td><span class="tag tb">'+r.src+'</span></td><td>'+r.party+'</td><td style="font-size:11px;color:var(--text2)">'+r.cat+'</td><td style="font-size:10.5px">'+r.mode+'</td><td class="pos" style="font-weight:600">'+fmt(r.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="7"><div class="empty">No income entries match the current filters</div></td></tr>';
   }
   var expEl=document.getElementById('dbExpenseTable');
   if(expEl){
     expEl.innerHTML = expenseRows.length ? expenseRows.map(function(r){
-      return '<tr><td style="font-weight:600;color:var(--warning);font-size:11px">'+r.vno+'</td><td><span class="tag ty">'+r.src+'</span></td><td>'+r.party+'</td><td style="font-size:11px;color:var(--text2)">'+r.cat+'</td><td style="font-size:10.5px">'+r.mode+'</td><td class="neg" style="font-weight:600">'+fmt(r.amount)+'</td></tr>';
-    }).join('') : '<tr><td colspan="6"><div class="empty">No expense entries for this date</div></td></tr>';
+      return '<tr><td style="font-size:10.5px;white-space:nowrap">'+fmtDate(r.date)+'</td><td style="font-weight:600;color:var(--warning);font-size:11px">'+r.vno+'</td><td><span class="tag ty">'+r.src+'</span></td><td>'+r.party+'</td><td style="font-size:11px;color:var(--text2)">'+r.cat+'</td><td style="font-size:10.5px">'+r.mode+'</td><td class="neg" style="font-weight:600">'+fmt(r.amount)+'</td></tr>';
+    }).join('') : '<tr><td colspan="7"><div class="empty">No expense entries match the current filters</div></td></tr>';
   }
 }
 function printDaybook(){
   var username = S.daybookViewUser || S.user.username;
   var u = DB.users.find(function(x){ return x.username===username; });
-  var dateStr = document.getElementById('daybook-date').value || today();
-  var previousBalance = getPreviousBalance(username, dateStr);
-  var incomeRows = getUserIncomeRows(username, dateStr);
-  var expenseRows = getUserExpenseRows(username, dateStr);
-  var dayIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
-  var dayExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
-  var cashInHand = previousBalance + dayIncome - dayExpense;
+  var fromDate = document.getElementById('daybook-date').value || today();
+  var toDate = document.getElementById('daybook-date-to').value || fromDate;
+  if(toDate < fromDate) toDate = fromDate;
+  var source = document.getElementById('db-sourceFilter').value || '';
+  var cat = document.getElementById('db-catFilter').value || '';
+  var q = (document.getElementById('db-search').value || '').toLowerCase();
+  var isSingleDay = fromDate===toDate;
+
+  var previousBalance = getPreviousBalance(username, fromDate);
+  var incomeRows = getUserIncomeRowsFiltered(username, fromDate, toDate, source, cat, q);
+  var expenseRows = getUserExpenseRowsFiltered(username, fromDate, toDate, source, cat, q);
+  var periodIncome = incomeRows.reduce(function(s,r){ return s+r.amount; },0);
+  var periodExpense = expenseRows.reduce(function(s,r){ return s+r.amount; },0);
+  var cashInHand = previousBalance + periodIncome - periodExpense;
   var co = S.settings.company;
 
+  var fl=[];
+  if(source) fl.push('Source: '+source);
+  if(cat) fl.push('Category: '+cat);
+  if(q) fl.push('Search: "'+q+'"');
+
   var incHtml = incomeRows.length ? incomeRows.map(function(r,i){
-    return '<tr style="background:'+(i%2===0?'#fff':'#f8fafc')+'"><td>'+r.vno+'</td><td>'+r.src+'</td><td>'+r.party+'</td><td>'+r.cat+'</td><td>'+r.mode+'</td><td style="text-align:right;font-weight:600;color:#10b981">'+fmt(r.amount)+'</td></tr>';
-  }).join('') : '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:10px">No income entries</td></tr>';
+    return '<tr style="background:'+(i%2===0?'#fff':'#f8fafc')+'"><td>'+fmtDate(r.date)+'</td><td>'+r.vno+'</td><td>'+r.src+'</td><td>'+r.party+'</td><td>'+r.cat+'</td><td>'+r.mode+'</td><td style="text-align:right;font-weight:600;color:#10b981">'+fmt(r.amount)+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:10px">No income entries</td></tr>';
 
   var expHtml = expenseRows.length ? expenseRows.map(function(r,i){
-    return '<tr style="background:'+(i%2===0?'#fff':'#f8fafc')+'"><td>'+r.vno+'</td><td>'+r.src+'</td><td>'+r.party+'</td><td>'+r.cat+'</td><td>'+r.mode+'</td><td style="text-align:right;font-weight:600;color:#ef4444">'+fmt(r.amount)+'</td></tr>';
-  }).join('') : '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:10px">No expense entries</td></tr>';
+    return '<tr style="background:'+(i%2===0?'#fff':'#f8fafc')+'"><td>'+fmtDate(r.date)+'</td><td>'+r.vno+'</td><td>'+r.src+'</td><td>'+r.party+'</td><td>'+r.cat+'</td><td>'+r.mode+'</td><td style="text-align:right;font-weight:600;color:#ef4444">'+fmt(r.amount)+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:10px">No expense entries</td></tr>';
+
+  var dateRangeLabel = isSingleDay ? (fmtDate(fromDate)+' / '+fmtBs(fromDate)) : (fmtDate(fromDate)+' – '+fmtDate(toDate)+' / '+fmtBs(fromDate)+' – '+fmtBs(toDate));
 
   var w = window.open('','_blank','width=850,height=900');
   w.document.write('<!DOCTYPE html><html><head><title>Daybook - '+(u?u.name:username)+'</title><style>'
     +'*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;padding:20px;font-size:12px;color:#000}'
     +'h1{font-size:18px;font-weight:800;text-align:center}h2{font-size:12px;text-align:center;color:#475569;margin-top:3px}'
     +'.meta{display:flex;justify-content:space-between;margin:12px 0;font-size:11px;background:#f1f5f9;padding:8px 12px;border-radius:6px;flex-wrap:wrap;gap:6px}'
+    +'.fl{font-size:11px;color:#64748b;padding:5px 12px;background:#fef9ec;border-left:3px solid #f59e0b;margin-bottom:6px}'
     +'.cards{display:flex;gap:10px;margin:12px 0}'
     +'.card{flex:1;background:#f8fafc;border-radius:8px;padding:10px 12px;text-align:center}'
     +'.card .lbl{font-size:9.5px;color:#64748b;text-transform:uppercase;letter-spacing:.5px}'
@@ -2304,21 +2427,22 @@ function printDaybook(){
     +'</style></head><body>'
     +'<h1>'+(co.name||'School')+'</h1>'+(co.addr1?'<h2>'+co.addr1+'</h2>':'')
     +'<h2 style="font-size:15px;margin-top:10px;text-decoration:underline;color:#000">Daily Cash Book (Daybook)</h2>'
+    +(fl.length?'<div class="fl">Filters: '+fl.join(' &nbsp;|&nbsp; ')+'</div>':'')
     +'<div class="meta">'
     +'<span>User: <b>'+(u?u.name:username)+'</b></span>'
-    +'<span>Date: <b>'+fmtDate(dateStr)+' / '+fmtBs(dateStr)+'</b></span>'
+    +'<span>Date: <b>'+dateRangeLabel+'</b></span>'
     +'<span>Printed: <b>'+new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})+'</b></span>'
     +'</div>'
     +'<div class="cards">'
     +'<div class="card"><div class="lbl">Previous Balance</div><div class="val">'+fmt(previousBalance)+'</div></div>'
-    +'<div class="card"><div class="lbl">Day Income</div><div class="val" style="color:#10b981">'+fmt(dayIncome)+'</div></div>'
-    +'<div class="card"><div class="lbl">Day Expense</div><div class="val" style="color:#ef4444">'+fmt(dayExpense)+'</div></div>'
+    +'<div class="card"><div class="lbl">'+(isSingleDay?'Day':'Period')+' Income</div><div class="val" style="color:#10b981">'+fmt(periodIncome)+'</div></div>'
+    +'<div class="card"><div class="lbl">'+(isSingleDay?'Day':'Period')+' Expense</div><div class="val" style="color:#ef4444">'+fmt(periodExpense)+'</div></div>'
     +'<div class="card"><div class="lbl">Cash In Hand</div><div class="val" style="color:'+(cashInHand>=0?'#10b981':'#ef4444')+'">'+fmt(cashInHand)+'</div></div>'
     +'</div>'
     +'<h3>💚 Income Entries</h3>'
-    +'<table><thead><tr><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead><tbody>'+incHtml+'</tbody></table>'
+    +'<table><thead><tr><th>Date</th><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead><tbody>'+incHtml+'</tbody></table>'
     +'<h3>🔴 Expense Entries</h3>'
-    +'<table><thead><tr><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead><tbody>'+expHtml+'</tbody></table>'
+    +'<table><thead><tr><th>Date</th><th>Voucher No.</th><th>Source</th><th>Party</th><th>Category</th><th>Mode</th><th>Amount</th></tr></thead><tbody>'+expHtml+'</tbody></table>'
     +'<div class="sig"><div class="sig-box"><div class="sig-line">Prepared By</div></div><div class="sig-box"><div class="sig-line">Checked By</div></div><div class="sig-box"><div class="sig-line">Authorised By</div></div></div>'
     +(co.footer?'<div style="text-align:center;margin-top:16px;font-size:10px;color:#94a3b8">'+co.footer+'</div>':'')
     +'<scr'+'ipt>window.onload=function(){window.print();setTimeout(function(){window.close()},1000)}<\/script>'
@@ -2357,6 +2481,10 @@ function viewUserDaybook(username){
   S.daybookViewUser = username;
   nav('daybook');
   var d=document.getElementById('daybook-date'); if(d) d.value=today();
+  var dTo=document.getElementById('daybook-date-to'); if(dTo) dTo.value=today();
+  var sf=document.getElementById('db-sourceFilter'); if(sf) sf.value='';
+  var cf=document.getElementById('db-catFilter'); if(cf) cf.value='';
+  var sq=document.getElementById('db-search'); if(sq) sq.value='';
   updateDaybookBanner();
   renderDaybook();
 }
@@ -2364,7 +2492,12 @@ function printUserDaybookAdmin(username){
   var prevView = S.daybookViewUser;
   S.daybookViewUser = username;
   var d=document.getElementById('daybook-date');
+  var dTo=document.getElementById('daybook-date-to');
   if(d) d.value = today();
+  if(dTo) dTo.value = today();
+  var sf=document.getElementById('db-sourceFilter'); if(sf) sf.value='';
+  var cf=document.getElementById('db-catFilter'); if(cf) cf.value='';
+  var sq=document.getElementById('db-search'); if(sq) sq.value='';
   printDaybook();
   S.daybookViewUser = prevView;
 }
