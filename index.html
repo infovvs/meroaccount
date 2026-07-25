@@ -245,7 +245,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
           </div>
         </div>
         <div class="card" id="dashUsersOverviewCard" style="display:none">
-          <div class="card-head"><h3>👥 All Users — Income &amp; Expense Overview (Today)</h3><button class="btn btn-ghost btn-sm" onclick="nav('usersCashBook')">View Full Cash Book →</button></div>
+          <div class="card-head"><h3 id="dashUsersOverviewTitle">👥 All Users — Income &amp; Expense Overview (Today)</h3><button class="btn btn-ghost btn-sm" id="dashUsersOverviewLink" onclick="nav('usersCashBook')">View Full Cash Book →</button></div>
           <div class="tbl-wrap">
             <table>
               <thead><tr><th>User</th><th>Today's Income</th><th>Today's Expense</th><th>Today's Net</th><th>Cash In Hand</th></tr></thead>
@@ -1225,6 +1225,25 @@ function mergeArr(key, localArr, remoteArr){
   return result.concat(pending);
 }
 var _syncInFlight = false;
+function reconcileRolePermissions(){
+  // Self-healing fix: any existing user whose saved permissions are missing pieces
+  // that their role should have by default (e.g. Accountants created before the
+  // role-defaults existed, or edited without ever touching the Role dropdown) get
+  // topped up automatically and the correction is written back to Google Sheets —
+  // no need to manually re-open and re-save every affected user.
+  if(!S.user || S.user.role!=='Administrator') return;
+  DB.users.forEach(function(u){
+    var defaults=ROLE_DEFAULT_PERMS[u.role];
+    if(!defaults||!defaults.length) return;
+    var current=typeof u.perms==='string'?u.perms.split(',').filter(Boolean):(u.perms||[]);
+    var merged=current.slice();
+    defaults.forEach(function(p){ if(merged.indexOf(p)===-1) merged.push(p); });
+    if(merged.length!==current.length){
+      u.perms=merged.join(',');
+      dbUpsert('users',u).catch(function(){});
+    }
+  });
+}
 function syncAll(){
   if(_syncInFlight) return Promise.resolve();
   _syncInFlight = true;
@@ -1244,6 +1263,7 @@ function syncAll(){
     DB.settings=data.settings||[];
     _persistSeenIds();
     applySettingsFromDB();setSyncStatus('live');updateApprovalBadge();updateMsgBadge();populateDropdowns();refreshCurrentPage();
+    reconcileRolePermissions();
     _syncInFlight = false;
     return data;
   }).catch(function(e){setSyncStatus('offline');_syncInFlight=false;throw e});
@@ -1518,11 +1538,15 @@ function renderDashApprovals(){
 function renderDashUsersOverview(){
   var card=document.getElementById('dashUsersOverviewCard');if(!card)return;
   var isAdmin=S.user&&S.user.role==='Administrator';
-  if(!isAdmin){card.style.display='none';return}
   card.style.display='block';
+  var titleEl=document.getElementById('dashUsersOverviewTitle');
+  var linkBtn=document.getElementById('dashUsersOverviewLink');
+  if(titleEl) titleEl.textContent = isAdmin ? '👥 All Users — Income & Expense Overview (Today)' : '👤 My Income & Expense Overview (Today)';
+  if(linkBtn) linkBtn.style.display = isAdmin ? '' : 'none';
   var el=document.getElementById('dashUsersOverviewTable');if(!el)return;
   var td=today();
-  var rows=DB.users.map(function(u){
+  var userList = isAdmin ? DB.users : DB.users.filter(function(u){return u.username===S.user.username;});
+  var rows=userList.map(function(u){
     var incToday=getUserIncomeRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
     var expToday=getUserExpenseRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
     var cash=computeCashInHand(u.username);
