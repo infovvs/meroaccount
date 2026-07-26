@@ -660,8 +660,8 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
             <div id="ieItemsSection" style="display:none">
               <div class="sec-label">📋 Line Items</div>
               <div id="ieItemsContainer">
-                <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 28px;gap:6px;margin-bottom:6px;font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px">
-                  <span>Description</span><span>Qty</span><span>Rate (₹)</span><span>Amount</span><span></span>
+                <div style="display:grid;grid-template-columns:3fr 1fr 28px;gap:6px;margin-bottom:6px;font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px">
+                  <span>Description</span><span>Amount</span><span></span>
                 </div>
                 <div id="ieItems"></div>
               </div>
@@ -669,7 +669,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
             </div>
             <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px">
               <button class="btn btn-success" onclick="saveIEEntry()" id="ieSaveBtn">💾 Save Entry</button>
-              <button class="btn btn-primary" onclick="printIEVoucher()">🖨️ Print Voucher</button>
+              <button class="btn btn-primary" onclick="printIEEntry()">🖨️ Print Voucher</button>
             </div>
           </div>
         </div>
@@ -1447,7 +1447,16 @@ function doLogin(){
     found={id:'U001',name:'Admin',username:'admin',password:'admin123',role:'Administrator',email:'',mobile:'',dept:'Management',status:'active',lastLogin:'',created:fmtDate(today()),perms:'cash_receipt,party_payment,misc_income,view_reports,manage_users,approvals,blacklist,notes,settings,parties'};
     DB.users.push(found);dbUpsert('users',found);
   }
-  S.user=found;S.user.perms=typeof found.perms==='string'?found.perms.split(','):found.perms||[];
+  S.user=found;
+  var savedPerms=typeof found.perms==='string'?found.perms.split(',').filter(Boolean):(found.perms||[]);
+  var roleDefaults=ROLE_DEFAULT_PERMS[found.role]||[];
+  var mergedPerms=savedPerms.slice();
+  roleDefaults.forEach(function(p){ if(mergedPerms.indexOf(p)===-1) mergedPerms.push(p); });
+  S.user.perms=mergedPerms;
+  if(mergedPerms.length!==savedPerms.length){
+    found.perms=mergedPerms.join(',');
+    dbUpsert('users',found).catch(function(){});
+  }
   found.lastLogin=new Date().toLocaleString('en-IN');dbUpsert('users',found);
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('mainApp').style.display='flex';
@@ -1537,14 +1546,18 @@ function setMINo(){var e=document.getElementById('mi-no');if(e)e.value=nextNo(S.
 
 // ── DASHBOARD ──
 function renderDashboard(){
-  var inc=DB.cashReceipts.reduce(function(s,r){return s+parseFloat(r.totalAmount||r.amount||0)},0)+DB.miscIncome.reduce(function(s,r){return s+parseFloat(r.amount||0)},0);
-  var exp=DB.partyPayments.filter(function(p){return p.status==='approved'}).reduce(function(s,r){return s+parseFloat(r.amount||0)},0);
+  var isAdmin=S.user&&S.user.role==='Administrator';
+  var myCR=isAdmin?DB.cashReceipts:DB.cashReceipts.filter(function(r){return r.createdBy===S.user.username;});
+  var myMI=isAdmin?DB.miscIncome:DB.miscIncome.filter(function(r){return r.createdBy===S.user.username;});
+  var myPP=isAdmin?DB.partyPayments:DB.partyPayments.filter(function(r){return r.createdBy===S.user.username;});
+  var inc=myCR.reduce(function(s,r){return s+parseFloat(r.totalAmount||r.amount||0)},0)+myMI.reduce(function(s,r){return s+parseFloat(r.amount||0)},0);
+  var exp=myPP.filter(function(p){return p.status==='approved'}).reduce(function(s,r){return s+parseFloat(r.amount||0)},0);
   function se(id,v){var e=document.getElementById(id);if(e)e.textContent=v}
   se('dashIncome',fmt(inc));se('dashExpense',fmt(exp));se('dashBalance',fmt(inc-exp));
   se('dashParties',DB.parties.filter(function(p){return p.status==='active'}).length);
   se('dashUsers',DB.users.filter(function(u){return u.status==='active'}).length);
   se('dashBL',DB.blacklist.filter(function(b){return b.status==='active'}).length);
-  se('dashPrinted',S.printedCount);se('dashTodayR',DB.cashReceipts.filter(function(r){return r.date===today()}).length);
+  se('dashPrinted',S.printedCount);se('dashTodayR',myCR.filter(function(r){return r.date===today()}).length);
   buildDashChart();buildIncomeBreakdown();renderDashTxns();renderDashApprovals();renderDashUsersOverview();
 }
 function buildDashChart(){
@@ -1618,11 +1631,12 @@ function saveCashReceipt(){
   var party=getParty(pid);var isEdit=!!S.editingId.cr;var rec;
   if(isEdit){rec=DB.cashReceipts.find(function(x){return x.id===S.editingId.cr});if(rec){rec.party=pid;rec.partyName=party.name;rec.cat=document.getElementById('cr-cat').value;rec.amount=amt;rec.tax=tax;rec.totalAmount=amt+tax;rec.mode=document.getElementById('cr-mode').value;rec.date=document.getElementById('cr-date').value;rec.narration=document.getElementById('cr-narration').value}}
   else{rec={id:uid(),no:nextNo(S.settings.voucher.crPre,DB.cashReceipts),party:pid,partyName:party.name,cat:document.getElementById('cr-cat').value,amount:amt,tax:tax,totalAmount:amt+tax,mode:document.getElementById('cr-mode').value,date:document.getElementById('cr-date').value,narration:document.getElementById('cr-narration').value,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.cashReceipts.unshift(rec)}
-  setBtnLoading('crSaveBtn','⏳ Saving...',true);
-  dbUpsert('cashReceipts',rec).then(function(){toast(isEdit?'Updated!':'Saved: '+rec.no,'success');resetCRForm();renderCRTable();renderIETable();renderDashboard();setBtnLoading('crSaveBtn','💾 Save Receipt',false)}).catch(function(e){toast('Save failed: '+e.message,'error');setBtnLoading('crSaveBtn','💾 Save Receipt',false)});
+  // Update instantly — don't wait on the network round-trip to show the result
+  toast(isEdit?'Updated!':'Saved: '+rec.no,'success');resetCRForm();renderCRTable();renderIETable();renderDashboard();
+  dbUpsert('cashReceipts',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
 function editCR(id){var r=DB.cashReceipts.find(function(x){return x.id===id});if(!r)return;S.editingId.cr=id;document.getElementById('cr-no').value=r.no;document.getElementById('cr-party').value=r.party;document.getElementById('cr-cat').value=r.cat;document.getElementById('cr-amount').value=r.amount;document.getElementById('cr-tax').value=r.tax||0;document.getElementById('cr-mode').value=r.mode;document.getElementById('cr-date').value=r.date;document.getElementById('cr-narration').value=r.narration||'';updateCRTotal();document.getElementById('crFormTitle').textContent='✏️ Edit Cash Receipt';document.getElementById('crCancelBtn').style.display='';document.getElementById('crSaveBtn').textContent='💾 Update';nav('cashReceipt')}
-function deleteCR(id){var r=DB.cashReceipts.find(function(x){return x.id===id});confirmDelete(r?r.no:'this receipt',function(){dbDelete('cashReceipts',id).then(function(){DB.cashReceipts=DB.cashReceipts.filter(function(x){return x.id!==id});renderCRTable();renderIETable();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Delete failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deleteCR(id){var r=DB.cashReceipts.find(function(x){return x.id===id});confirmDelete(r?r.no:'this receipt',function(){DB.cashReceipts=DB.cashReceipts.filter(function(x){return x.id!==id});renderCRTable();renderIETable();toast('Deleted','warn');closeModal('deleteModal');dbDelete('cashReceipts',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 function resetCRForm(){S.editingId.cr=null;document.getElementById('crFormTitle').textContent='🧾 New Cash Receipt';document.getElementById('crCancelBtn').style.display='none';document.getElementById('crSaveBtn').textContent='💾 Save Receipt';['cr-party','cr-amount','cr-narration'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('cr-tax').value=0;document.getElementById('cr-mode').value='Cash';document.getElementById('cr-date').value=today();updateCRTotal();setCRNo()}
 function renderCRTable(){
   var el=document.getElementById('crTable');if(!el)return;
@@ -1639,11 +1653,12 @@ function submitPPApproval(){
   if(!pid){toast('Please select a party','error');return}if(!amt||amt<=0){toast('Enter amount','error');return}
   var party=getParty(pid);var rec={id:uid(),no:nextNo(S.settings.voucher.ppPre,DB.partyPayments),party:pid,partyName:party.name,cat:document.getElementById('pp-cat').value,amount:amt,mode:document.getElementById('pp-mode').value,date:document.getElementById('pp-date').value,narration:document.getElementById('pp-narration').value,status:'pending',submittedBy:S.user.username,approvedBy:'',createdBy:S.user.username,createdAt:new Date().toISOString()};
   DB.partyPayments.unshift(rec);setBtnLoading('ppSubmitBtn','⏳...',true);
-  dbUpsert('partyPayments',rec).then(function(){toast('Submitted: '+rec.no,'info');resetPPForm();renderPPTable();updateApprovalBadge();setBtnLoading('ppSubmitBtn','📤 Submit for Approval',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('ppSubmitBtn','📤 Submit for Approval',false)});
+  toast('Submitted: '+rec.no,'info');resetPPForm();renderPPTable();updateApprovalBadge();
+  dbUpsert('partyPayments',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
-function savePP(){var r=DB.partyPayments.find(function(x){return x.id===S.editingId.pp});if(!r)return;var pid=document.getElementById('pp-party').value;var party=getParty(pid);r.party=pid;r.partyName=party.name;r.cat=document.getElementById('pp-cat').value;r.amount=parseFloat(document.getElementById('pp-amount').value)||0;r.mode=document.getElementById('pp-mode').value;r.date=document.getElementById('pp-date').value;r.narration=document.getElementById('pp-narration').value;dbUpsert('partyPayments',r).then(function(){toast('Updated!','success');resetPPForm();renderPPTable();renderApprovalsTable();updateApprovalBadge()}).catch(function(e){toast('Failed: '+e.message,'error')})}
+function savePP(){var r=DB.partyPayments.find(function(x){return x.id===S.editingId.pp});if(!r)return;var pid=document.getElementById('pp-party').value;var party=getParty(pid);r.party=pid;r.partyName=party.name;r.cat=document.getElementById('pp-cat').value;r.amount=parseFloat(document.getElementById('pp-amount').value)||0;r.mode=document.getElementById('pp-mode').value;r.date=document.getElementById('pp-date').value;r.narration=document.getElementById('pp-narration').value;toast('Updated!','success');resetPPForm();renderPPTable();renderApprovalsTable();updateApprovalBadge();dbUpsert('partyPayments',r).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')})}
 function editPP(id){var r=DB.partyPayments.find(function(x){return x.id===id});if(!r)return;if(r.status==='approved'&&!hasPerm('approvals')){toast('Approved vouchers cannot be edited','error');return}S.editingId.pp=id;document.getElementById('pp-no').value=r.no;document.getElementById('pp-party').value=r.party;document.getElementById('pp-cat').value=r.cat;document.getElementById('pp-amount').value=r.amount;document.getElementById('pp-mode').value=r.mode;document.getElementById('pp-date').value=r.date;document.getElementById('pp-narration').value=r.narration||'';document.getElementById('ppFormTitle').textContent='✏️ Edit Payment';document.getElementById('ppCancelBtn').style.display='';document.getElementById('ppSubmitBtn').style.display='none';document.getElementById('ppSaveBtn').style.display='';nav('partyPayment')}
-function deletePP(id){var r=DB.partyPayments.find(function(x){return x.id===id});if(r&&r.status==='approved'&&!hasPerm('approvals')){toast('Cannot delete approved voucher','error');return}confirmDelete(r?r.no:'this payment',function(){dbDelete('partyPayments',id).then(function(){DB.partyPayments=DB.partyPayments.filter(function(x){return x.id!==id});renderPPTable();renderApprovalsTable();updateApprovalBadge();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deletePP(id){var r=DB.partyPayments.find(function(x){return x.id===id});if(r&&r.status==='approved'&&!hasPerm('approvals')){toast('Cannot delete approved voucher','error');return}confirmDelete(r?r.no:'this payment',function(){DB.partyPayments=DB.partyPayments.filter(function(x){return x.id!==id});renderPPTable();renderApprovalsTable();updateApprovalBadge();toast('Deleted','warn');closeModal('deleteModal');dbDelete('partyPayments',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 function resetPPForm(){S.editingId.pp=null;document.getElementById('ppFormTitle').textContent='💸 Party Payment Entry';document.getElementById('ppCancelBtn').style.display='none';document.getElementById('ppSubmitBtn').style.display='';document.getElementById('ppSaveBtn').style.display='none';['pp-party','pp-amount','pp-narration'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('pp-date').value=today();setPPNo()}
 function renderPPTable(){
   var el=document.getElementById('ppTable');if(!el)return;
@@ -1662,10 +1677,11 @@ function saveMI(){
   if(isEdit){rec=DB.miscIncome.find(function(x){return x.id===S.editingId.mi});if(rec){rec.source=document.getElementById('mi-source').value;rec.from=from;rec.amount=amt;rec.mode=document.getElementById('mi-mode').value;rec.date=document.getElementById('mi-date').value;rec.narration=document.getElementById('mi-narration').value}}
   else{rec={id:uid(),no:nextNo(S.settings.voucher.miPre,DB.miscIncome),source:document.getElementById('mi-source').value,from:from,amount:amt,mode:document.getElementById('mi-mode').value,date:document.getElementById('mi-date').value,narration:document.getElementById('mi-narration').value,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.miscIncome.unshift(rec)}
   setBtnLoading('miSaveBtn','⏳...',true);
-  dbUpsert('miscIncome',rec).then(function(){toast(isEdit?'Updated!':'Saved: '+rec.no,'success');resetMIForm();renderMITable();renderIETable();setBtnLoading('miSaveBtn','💾 Save',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('miSaveBtn','💾 Save',false)});
+  toast(isEdit?'Updated!':'Saved: '+rec.no,'success');resetMIForm();renderMITable();renderIETable();
+  dbUpsert('miscIncome',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
 function editMI(id){var r=DB.miscIncome.find(function(x){return x.id===id});if(!r)return;S.editingId.mi=id;document.getElementById('mi-no').value=r.no;document.getElementById('mi-source').value=r.source;document.getElementById('mi-from').value=r.from;document.getElementById('mi-amount').value=r.amount;document.getElementById('mi-mode').value=r.mode;document.getElementById('mi-date').value=r.date;document.getElementById('mi-narration').value=r.narration||'';document.getElementById('miFormTitle').textContent='✏️ Edit Misc Income';document.getElementById('miCancelBtn').style.display='';document.getElementById('miSaveBtn').textContent='💾 Update';nav('miscIncome')}
-function deleteMI(id){var r=DB.miscIncome.find(function(x){return x.id===id});confirmDelete(r?r.no:'this entry',function(){dbDelete('miscIncome',id).then(function(){DB.miscIncome=DB.miscIncome.filter(function(x){return x.id!==id});renderMITable();renderIETable();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deleteMI(id){var r=DB.miscIncome.find(function(x){return x.id===id});confirmDelete(r?r.no:'this entry',function(){DB.miscIncome=DB.miscIncome.filter(function(x){return x.id!==id});renderMITable();renderIETable();toast('Deleted','warn');closeModal('deleteModal');dbDelete('miscIncome',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 function resetMIForm(){S.editingId.mi=null;document.getElementById('miFormTitle').textContent='💰 Misc Income Entry';document.getElementById('miCancelBtn').style.display='none';document.getElementById('miSaveBtn').textContent='💾 Save';['mi-from','mi-amount','mi-narration'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('mi-date').value=today();setMINo()}
 function renderMITable(){
   var el=document.getElementById('miTable');if(!el)return;
@@ -1754,7 +1770,7 @@ function setIEEntryMode(mode, el){
   if(mode==='itemized' && ieItems.length===0){ addIEItem(); }
 }
 function addIEItem(){
-  ieItems.push({ id: uid(), desc:'', qty:1, rate:0, amt:0 });
+  ieItems.push({ id: uid(), desc:'', amt:0 });
   renderIEItems();
 }
 function removeIEItem(id){
@@ -1765,21 +1781,16 @@ function removeIEItem(id){
 function renderIEItems(){
   var el = document.getElementById('ieItems'); if(!el) return;
   el.innerHTML = ieItems.map(function(item){
-    return '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 28px;gap:6px;margin-bottom:5px">'
+    return '<div style="display:grid;grid-template-columns:3fr 1fr 28px;gap:6px;margin-bottom:5px">'
       +'<input value="'+item.desc+'" placeholder="Description" style="font-size:12px;padding:5px 8px" oninput="updateIEItem(\''+item.id+'\',\'desc\',this.value)">'
-      +'<input type="number" value="'+item.qty+'" min="1" style="font-size:12px;padding:5px 8px;text-align:right" oninput="updateIEItem(\''+item.id+'\',\'qty\',this.value)">'
-      +'<input type="number" value="'+item.rate+'" min="0" style="font-size:12px;padding:5px 8px;text-align:right" placeholder="0.00" oninput="updateIEItem(\''+item.id+'\',\'rate\',this.value)">'
-      +'<div style="padding:5px 8px;background:var(--bg);border:1px solid var(--border2);border-radius:8px;font-size:12px;font-weight:600;color:var(--success);text-align:right" id="ieitemamt-'+item.id+'">'+fmt(item.amt)+'</div>'
+      +'<input type="number" value="'+item.amt+'" min="0" placeholder="0.00" style="font-size:12px;padding:5px 8px;text-align:right" oninput="updateIEItem(\''+item.id+'\',\'amt\',this.value)">'
       +'<button class="btn btn-danger btn-xs btn-icon" onclick="removeIEItem(\''+item.id+'\')" style="align-self:center">✕</button>'
       +'</div>';
   }).join('');
 }
 function updateIEItem(id, field, val){
   var item = ieItems.find(function(x){ return x.id===id; }); if(!item) return;
-  if(field==='qty'||field==='rate') item[field] = parseFloat(val)||0; else item[field] = val;
-  item.amt = (item.qty||0) * (item.rate||0);
-  var amtEl = document.getElementById('ieitemamt-'+id);
-  if(amtEl) amtEl.textContent = fmt(item.amt);
+  if(field==='amt') item.amt = parseFloat(val)||0; else item[field] = val;
   calcIEItemsTotal();
 }
 function calcIEItemsTotal(){
@@ -1789,7 +1800,7 @@ function calcIEItemsTotal(){
 }
 function buildIEItemsNarration(){
   var lines = ieItems.filter(function(i){ return i.desc && i.amt>0; }).map(function(i){
-    return i.desc+' (x'+i.qty+' @ '+fmt(i.rate)+' = '+fmt(i.amt)+')';
+    return i.desc+' ('+fmt(i.amt)+')';
   });
   return lines.join('; ');
 }
@@ -1815,11 +1826,13 @@ function saveIEEntry(){
   if(type==='Income'){
     if(isEdit){rec=DB.miscIncome.find(function(x){return x.id===S.editingId.ie});if(rec){rec.source=cat;rec.from=party;rec.amount=amt;rec.mode=mode;rec.date=date;rec.narration=narration}}
     else{rec={id:uid(),no:nextNo(S.settings.voucher.miPre,DB.miscIncome),source:cat,from:party,amount:amt,mode:mode,date:date,narration:narration,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.miscIncome.unshift(rec)}
-    setBtnLoading('ieSaveBtn','⏳...',true);dbUpsert('miscIncome',rec).then(function(){toast(isEdit?'Updated!':'Income saved: '+rec.no,'success');resetIEForm();renderIETable();renderDashboard();setBtnLoading('ieSaveBtn','💾 Save Entry',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('ieSaveBtn','💾 Save Entry',false)});
+    toast(isEdit?'Updated!':'Income saved: '+rec.no,'success');resetIEForm();renderIETable();renderDashboard();
+    dbUpsert('miscIncome',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
   }else{
     if(isEdit){rec=DB.partyPayments.find(function(x){return x.id===S.editingId.ie});if(rec){rec.cat=cat;rec.partyName=party;rec.amount=amt;rec.mode=mode;rec.date=date;rec.narration=narration}}
     else{rec={id:uid(),no:nextNo(S.settings.voucher.ppPre,DB.partyPayments),party:'',partyName:party,cat:cat,amount:amt,mode:mode,date:date,narration:narration,status:'approved',submittedBy:S.user.username,approvedBy:S.user.username,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.partyPayments.unshift(rec)}
-    setBtnLoading('ieSaveBtn','⏳...',true);dbUpsert('partyPayments',rec).then(function(){toast(isEdit?'Updated!':'Expense saved: '+rec.no,'success');resetIEForm();renderIETable();renderDashboard();setBtnLoading('ieSaveBtn','💾 Save Entry',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('ieSaveBtn','💾 Save Entry',false)});
+    toast(isEdit?'Updated!':'Expense saved: '+rec.no,'success');resetIEForm();renderIETable();renderDashboard();
+    dbUpsert('partyPayments',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
   }
 }
 function editIERow(type,id){
@@ -1842,12 +1855,11 @@ function deleteIERow(type,id){
   if(type==='Income'){var r=DB.cashReceipts.find(function(x){return x.id===id});if(r){sheet='cashReceipts';label=r.no}else{var r2=DB.miscIncome.find(function(x){return x.id===id});if(r2){sheet='miscIncome';label=r2.no}}}
   else{var r=DB.partyPayments.find(function(x){return x.id===id});if(r){sheet='partyPayments';label=r.no}}
   confirmDelete(label,function(){
-    dbDelete(sheet,id).then(function(){
-      if(sheet==='cashReceipts')DB.cashReceipts=DB.cashReceipts.filter(function(x){return x.id!==id});
-      else if(sheet==='miscIncome')DB.miscIncome=DB.miscIncome.filter(function(x){return x.id!==id});
-      else DB.partyPayments=DB.partyPayments.filter(function(x){return x.id!==id});
-      renderIETable();renderDashboard();toast('Deleted','warn');closeModal('deleteModal');
-    }).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')});
+    if(sheet==='cashReceipts')DB.cashReceipts=DB.cashReceipts.filter(function(x){return x.id!==id});
+    else if(sheet==='miscIncome')DB.miscIncome=DB.miscIncome.filter(function(x){return x.id!==id});
+    else DB.partyPayments=DB.partyPayments.filter(function(x){return x.id!==id});
+    renderIETable();renderDashboard();toast('Deleted','warn');closeModal('deleteModal');
+    dbDelete(sheet,id).catch(function(e){toast('Background delete failed: '+e.message,'error')});
   });
 }
 function printSingleIE(id,type){
@@ -1865,6 +1877,115 @@ function printIEVoucher(){
   w.document.write('<!DOCTYPE html><html><head><title>Voucher</title><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;padding:16px;font-family:Arial,sans-serif}@page{margin:10mm}</style></head><body>'+html+'<scr'+'ipt>window.onload=function(){window.print();setTimeout(function(){window.close()},800)}<\/script></body></html>');
   w.document.close();S.printedCount++;localStorage.setItem('eap_prints',S.printedCount);
 }
+function printIEEntry(){
+  if(S.ieEntryMode==='itemized'){ printIEItemizedInvoice(); }
+  else { printIEVoucher(); }
+}
+function printIEItemizedInvoice(){
+  var type = document.getElementById('ie-type').value;
+  var party = document.getElementById('ie-party').value.trim();
+  if(!party){ toast('Enter party / source name','error'); return; }
+  if(ieItems.length===0 || ieItems.every(function(i){return !i.desc||i.amt<=0;})){ toast('Add at least one item','error'); return; }
+  var total = calcIEItemsTotal();
+  if(total<=0){ toast('Enter valid item amounts','error'); return; }
+
+  var co = S.settings.company;
+  var sym = S.settings.currency.symbol;
+  var date = document.getElementById('ie-date').value || today();
+  var cat = document.getElementById('ie-cat').value;
+  var mode = document.getElementById('ie-mode').value;
+  var narration = document.getElementById('ie-narration').value;
+  var vno = (type==='Income'?'MI':'PP')+'-'+new Date().getFullYear()+'-'+numPad(Math.floor(Math.random()*9000)+1000,4);
+
+  var itemsHtml = ieItems.filter(function(i){return i.desc&&i.amt>0;}).map(function(item,i){
+    return '<tr style="background:'+(i%2===0?'#fff':'#f8fafc')+'">'
+      +'<td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:12px">'+(item.desc||'')+'</td>'
+      +'<td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;font-weight:600">'+sym+' '+(parseFloat(item.amt||0)).toLocaleString('en-IN')+'</td>'
+      +'</tr>';
+  }).join('');
+
+  var w = window.open('','_blank','width=800,height=900');
+  w.document.write('<!DOCTYPE html><html><head><title>'+type+' - '+vno+'</title>'
+    +'<style>'
+    +'*{box-sizing:border-box;margin:0;padding:0}'
+    +'body{font-family:Arial,sans-serif;background:#fff;color:#000;padding:24px;font-size:13px}'
+    +'.inv-wrap{max-width:680px;margin:0 auto}'
+    +'.inv-head{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:3px solid #1e3a5f;margin-bottom:16px}'
+    +'.school-info h1{font-size:20px;font-weight:800;color:#1e3a5f}'
+    +'.school-info p{font-size:11px;color:#64748b;margin-top:2px}'
+    +'.inv-title{text-align:right}'
+    +'.inv-title h2{font-size:24px;font-weight:800;color:#1e3a5f;letter-spacing:1px}'
+    +'.inv-title .inv-no{font-size:13px;color:#64748b;margin-top:2px}'
+    +'.inv-title .status{display:inline-block;padding:3px 12px;border-radius:20px;font-size:11px;font-weight:700;margin-top:4px}'
+    +'.status-Income{background:#dcfce7;color:#166534}'
+    +'.status-Expense{background:#fee2e2;color:#991b1b}'
+    +'.billing{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}'
+    +'.billing-box{background:#f8fafc;border-radius:8px;padding:12px}'
+    +'.billing-box h3{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#64748b;font-weight:700;margin-bottom:6px}'
+    +'.billing-box p{font-size:12.5px;color:#1e293b;line-height:1.5}'
+    +'.billing-box .highlight{font-weight:700;font-size:14px;color:#1e3a5f}'
+    +'table{width:100%;border-collapse:collapse;margin-bottom:0}'
+    +'thead{background:#1e3a5f}'
+    +'th{padding:9px 10px;color:#fff;font-size:11px;font-weight:700;text-align:left}'
+    +'th:nth-child(2){text-align:right}'
+    +'.totals-box{display:flex;justify-content:flex-end;margin-top:0}'
+    +'.totals-inner{width:260px}'
+    +'.tot-grand{display:flex;justify-content:space-between;padding:8px 0;font-size:15px;font-weight:800;color:#1e3a5f;border-top:2px solid #1e3a5f;margin-top:4px}'
+    +'.words{font-size:11px;color:#475569;font-style:italic;margin:8px 0 16px}'
+    +'.sig-row{display:flex;justify-content:space-between;margin-top:32px}'
+    +'.sig-box{text-align:center;flex:1}'
+    +'.sig-line{border-top:1px solid #000;padding-top:4px;font-size:11px;margin:0 10px}'
+    +'.footer{text-align:center;margin-top:20px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}'
+    +'@page{margin:12mm}'
+    +'</style></head><body>'
+    +'<div class="inv-wrap">'
+    +'<div class="inv-head">'
+    +'<div class="school-info">'
+    +(co.logoUrl?'<img src="'+co.logoUrl+'" style="height:52px;max-width:120px;object-fit:contain;margin-bottom:6px;display:block">':'')
+    +'<h1>'+(co.name||'School Name')+'</h1>'
+    +'<p>'+(co.addr1||'')+(co.addr2?', '+co.addr2:'')+'</p>'
+    +(co.phone?'<p>Tel: '+co.phone+(co.email?' | '+co.email:'')+'</p>':'')
+    +'</div>'
+    +'<div class="inv-title">'
+    +'<h2>'+(type==='Income'?'RECEIPT':'PAYMENT')+'</h2>'
+    +'<div class="inv-no">'+vno+'</div>'
+    +'<div class="status status-'+type+'">'+type+'</div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="billing">'
+    +'<div class="billing-box">'
+    +'<h3>'+(type==='Income'?'Received From':'Paid To')+'</h3>'
+    +'<p class="highlight">'+party+'</p>'
+    +'<p>Category: '+cat+'</p>'
+    +'</div>'
+    +'<div class="billing-box">'
+    +'<h3>Details</h3>'
+    +'<p><b>Voucher No:</b> '+vno+'</p>'
+    +'<p><b>Date (AD):</b> '+fmtDate(date)+'</p><p><b>Date (BS):</b> '+fmtBs(date)+'</p>'
+    +'<p><b>Payment Mode:</b> '+mode+'</p>'
+    +'<p><b>Prepared By:</b> '+(S.user?S.user.name:'')+'</p>'
+    +'</div>'
+    +'</div>'
+    +'<table><thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>'
+    +'<tbody>'+itemsHtml+'</tbody></table>'
+    +'<div class="totals-box"><div class="totals-inner">'
+    +'<div class="tot-grand"><span>Total</span><span>'+fmt(total)+'</span></div>'
+    +'</div></div>'
+    +'<div class="words">In Words: '+amtToWords(total)+' Only</div>'
+    +(narration?'<div style="background:#f8fafc;border-left:3px solid #1e3a5f;padding:8px 12px;border-radius:4px;font-size:11.5px;color:#475569;margin-bottom:12px"><b>Narration:</b> '+narration+'</div>':'')
+    +'<div class="sig-row">'
+    +'<div class="sig-box"><div class="sig-line">Prepared By</div></div>'
+    +'<div class="sig-box"><div class="sig-line">Checked By</div></div>'
+    +'<div class="sig-box"><div class="sig-line">'+(type==='Income'?"Receiver\'s Signature":'Authorised By')+'</div></div>'
+    +'</div>'
+    +(co.footer?'<div class="footer">'+co.footer+'</div>':'')
+    +'</div>'
+    +'<scr'+'ipt>window.onload=function(){window.print();setTimeout(function(){window.close()},1000)}<\/script>'
+    +'</body></html>');
+  w.document.close();
+  S.printedCount++; localStorage.setItem('eap_prints', S.printedCount);
+}
+
 function printIEReport(){
   var co=S.settings.company;var allRows=[];
   DB.cashReceipts.forEach(function(r){allRows.push({date:r.date,vno:r.no,cat:r.cat,party:r.partyName,narration:r.narration,mode:r.mode||'Cash',type:'Income',dr:parseFloat(r.totalAmount||r.amount||0),cr:0,createdBy:r.createdBy})});
@@ -2157,9 +2278,10 @@ function saveParty(){
   var name=document.getElementById('pm-name').value.trim();if(!name){toast('Enter party name','error');return}
   var rec;if(S.editingId.party){rec=DB.parties.find(function(x){return x.id===S.editingId.party});if(rec){rec.name=name;rec.type=document.getElementById('pm-type').value;rec.phone=document.getElementById('pm-phone').value;rec.email=document.getElementById('pm-email').value;rec.balance=parseFloat(document.getElementById('pm-balance').value)||0;rec.baltype=document.getElementById('pm-baltype').value;rec.address=document.getElementById('pm-address').value;rec.city=document.getElementById('pm-city').value;rec.state=document.getElementById('pm-state').value;rec.pan=document.getElementById('pm-pan').value;rec.status=document.getElementById('pm-status').value;rec.notes=document.getElementById('pm-notes').value}}
   else{rec={id:'P'+uid(),name:name,type:document.getElementById('pm-type').value,phone:document.getElementById('pm-phone').value,email:document.getElementById('pm-email').value,balance:parseFloat(document.getElementById('pm-balance').value)||0,baltype:document.getElementById('pm-baltype').value,address:document.getElementById('pm-address').value,city:document.getElementById('pm-city').value,state:document.getElementById('pm-state').value,pan:document.getElementById('pm-pan').value,status:document.getElementById('pm-status').value,notes:document.getElementById('pm-notes').value,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.parties.push(rec)}
-  setBtnLoading('partySaveBtn','⏳...',true);dbUpsert('parties',rec).then(function(){toast(S.editingId.party?'Updated!':'Party added!','success');closeModal('partyModal');renderPartiesTable();populateDropdowns();setBtnLoading('partySaveBtn','💾 Save Party',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('partySaveBtn','💾 Save Party',false)});
+  toast(S.editingId.party?'Updated!':'Party added!','success');closeModal('partyModal');renderPartiesTable();populateDropdowns();
+  dbUpsert('parties',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
-function deleteParty(id){var p=DB.parties.find(function(x){return x.id===id});confirmDelete(p?p.name:'this party',function(){dbDelete('parties',id).then(function(){DB.parties=DB.parties.filter(function(x){return x.id!==id});renderPartiesTable();populateDropdowns();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deleteParty(id){var p=DB.parties.find(function(x){return x.id===id});confirmDelete(p?p.name:'this party',function(){DB.parties=DB.parties.filter(function(x){return x.id!==id});renderPartiesTable();populateDropdowns();toast('Deleted','warn');closeModal('deleteModal');dbDelete('parties',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 
 // ── USERS ──
 function renderUsersTable(){
@@ -2189,10 +2311,11 @@ function saveUser(){
   var openingBal=parseFloat(document.getElementById('um-openingBalance').value)||0;
   var rec;if(S.editingId.user){rec=DB.users.find(function(x){return x.id===S.editingId.user});if(rec){rec.name=name;rec.username=username;rec.role=document.getElementById('um-role').value;rec.email=document.getElementById('um-email').value;rec.mobile=document.getElementById('um-mobile').value;rec.status=document.getElementById('um-status').value;rec.dept=document.getElementById('um-dept').value;rec.perms=perms;rec.openingBalance=openingBal;var np=document.getElementById('um-pass').value;if(np)rec.password=np}}
   else{var pass=document.getElementById('um-pass').value;if(!pass){toast('Password required for new user','error');return}if(DB.users.find(function(u){return u.username===username})){toast('Username already exists','error');return}rec={id:'U'+uid(),name:name,username:username,password:pass,role:document.getElementById('um-role').value,email:document.getElementById('um-email').value,mobile:document.getElementById('um-mobile').value,dept:document.getElementById('um-dept').value,status:'active',lastLogin:'Never',created:fmtDate(today()),perms:perms,openingBalance:openingBal};DB.users.push(rec)}
-  setBtnLoading('userSaveBtn','⏳...',true);dbUpsert('users',rec).then(function(){toast(S.editingId.user?'User updated!':'User created!','success');closeModal('userModal');renderUsersTable();populateDropdowns();setBtnLoading('userSaveBtn','💾 Save User',false)}).catch(function(e){toast('Failed: '+e.message,'error');setBtnLoading('userSaveBtn','💾 Save User',false)});
+  toast(S.editingId.user?'User updated!':'User created!','success');closeModal('userModal');renderUsersTable();populateDropdowns();
+  dbUpsert('users',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
-function deleteUser(id){var u=DB.users.find(function(x){return x.id===id});if(u&&u.username==='admin'){toast('Cannot delete main admin','error');return}confirmDelete(u?u.name:'this user',function(){dbDelete('users',id).then(function(){DB.users=DB.users.filter(function(x){return x.id!==id});renderUsersTable();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
-function toggleUserStatus(id){var u=DB.users.find(function(x){return x.id===id});if(!u)return;if(u.username==='admin'){toast('Cannot deactivate admin','error');return}u.status=u.status==='active'?'inactive':'active';dbUpsert('users',u).then(function(){renderUsersTable();toast(u.name+(u.status==='active'?' activated':' deactivated'),u.status==='active'?'success':'warn')}).catch(function(e){toast('Failed: '+e.message,'error')})}
+function deleteUser(id){var u=DB.users.find(function(x){return x.id===id});if(u&&u.username==='admin'){toast('Cannot delete main admin','error');return}confirmDelete(u?u.name:'this user',function(){DB.users=DB.users.filter(function(x){return x.id!==id});renderUsersTable();toast('Deleted','warn');closeModal('deleteModal');dbDelete('users',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
+function toggleUserStatus(id){var u=DB.users.find(function(x){return x.id===id});if(!u)return;if(u.username==='admin'){toast('Cannot deactivate admin','error');return}u.status=u.status==='active'?'inactive':'active';renderUsersTable();toast(u.name+(u.status==='active'?' activated':' deactivated'),u.status==='active'?'success':'warn');dbUpsert('users',u).catch(function(e){toast('Background save failed: '+e.message,'error')})}
 
 // ── APPROVALS ──
 function renderApprovalsTable(){
@@ -2541,8 +2664,8 @@ function printUsersCashBookSummary(){
   w.document.close();
 }
 
-function approvePayment(id){var p=DB.partyPayments.find(function(x){return x.id===id});if(!p)return;p.status='approved';p.approvedBy=S.user.username;dbUpsert('partyPayments',p).then(function(){renderApprovalsTable();renderPPTable();renderDashboard();updateApprovalBadge();toast('Approved: '+p.no,'success')}).catch(function(e){toast('Failed: '+e.message,'error')})}
-function rejectPayment(id){var p=DB.partyPayments.find(function(x){return x.id===id});if(!p)return;p.status='rejected';dbUpsert('partyPayments',p).then(function(){renderApprovalsTable();renderPPTable();updateApprovalBadge();toast('Rejected','warn')}).catch(function(e){toast('Failed: '+e.message,'error')})}
+function approvePayment(id){var p=DB.partyPayments.find(function(x){return x.id===id});if(!p)return;p.status='approved';p.approvedBy=S.user.username;renderApprovalsTable();renderPPTable();renderDashboard();updateApprovalBadge();toast('Approved: '+p.no,'success');dbUpsert('partyPayments',p).catch(function(e){toast('Background save failed: '+e.message,'error')})}
+function rejectPayment(id){var p=DB.partyPayments.find(function(x){return x.id===id});if(!p)return;p.status='rejected';renderApprovalsTable();renderPPTable();updateApprovalBadge();toast('Rejected','warn');dbUpsert('partyPayments',p).catch(function(e){toast('Background save failed: '+e.message,'error')})}
 
 // ── BLACKLIST ──
 function renderBLTable(){
@@ -2554,15 +2677,15 @@ function renderBLTable(){
   var d=document.getElementById('dashBL');if(d)d.textContent=DB.blacklist.filter(function(b){return b.status==='active'}).length;
 }
 function openBLModal(id){S.editingId.bl=id||null;if(id){var b=DB.blacklist.find(function(x){return x.id===id});if(!b)return;document.getElementById('blModalTitle').textContent='✏️ Edit Blacklist Entry';document.getElementById('blSaveBtn').textContent='💾 Update';document.getElementById('bl-partyName').value=b.partyName||'';document.getElementById('bl-type').value=b.type||'Other';document.getElementById('bl-reason').value=b.reason;document.getElementById('bl-details').value=b.details||''}else{document.getElementById('blModalTitle').textContent='🚫 Add to Blacklist';document.getElementById('blSaveBtn').textContent='🚫 Blacklist';['bl-partyName','bl-details'].forEach(function(i){var e=document.getElementById(i);if(e)e.value=''});document.getElementById('bl-reason').value='Non-payment of dues'}openModal('blModal')}
-function saveBlacklist(){var pn=document.getElementById('bl-partyName').value.trim();if(!pn){toast('Enter party name','error');return}var rec;if(S.editingId.bl){rec=DB.blacklist.find(function(x){return x.id===S.editingId.bl});if(rec){rec.partyName=pn;rec.type=document.getElementById('bl-type').value;rec.reason=document.getElementById('bl-reason').value;rec.details=document.getElementById('bl-details').value}}else{rec={id:'BL'+uid(),partyId:'',partyName:pn,type:document.getElementById('bl-type').value,reason:document.getElementById('bl-reason').value,details:document.getElementById('bl-details').value,addedBy:S.user.username,date:today(),status:'active'};DB.blacklist.unshift(rec)}dbUpsert('blacklist',rec).then(function(){toast(S.editingId.bl?'Updated!':'Blacklisted!','warn');closeModal('blModal');renderBLTable()}).catch(function(e){toast('Failed: '+e.message,'error')})}
-function toggleBL(id){var b=DB.blacklist.find(function(x){return x.id===id});if(!b)return;b.status=b.status==='active'?'removed':'active';dbUpsert('blacklist',b).then(function(){renderBLTable();toast(b.status==='active'?'Restored':'Removed',b.status==='active'?'warn':'success')}).catch(function(e){toast('Failed: '+e.message,'error')})}
-function deleteBL(id){var b=DB.blacklist.find(function(x){return x.id===id});confirmDelete(b?b.partyName:'this entry',function(){dbDelete('blacklist',id).then(function(){DB.blacklist=DB.blacklist.filter(function(x){return x.id!==id});renderBLTable();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function saveBlacklist(){var pn=document.getElementById('bl-partyName').value.trim();if(!pn){toast('Enter party name','error');return}var rec;if(S.editingId.bl){rec=DB.blacklist.find(function(x){return x.id===S.editingId.bl});if(rec){rec.partyName=pn;rec.type=document.getElementById('bl-type').value;rec.reason=document.getElementById('bl-reason').value;rec.details=document.getElementById('bl-details').value}}else{rec={id:'BL'+uid(),partyId:'',partyName:pn,type:document.getElementById('bl-type').value,reason:document.getElementById('bl-reason').value,details:document.getElementById('bl-details').value,addedBy:S.user.username,date:today(),status:'active'};DB.blacklist.unshift(rec)}toast(S.editingId.bl?'Updated!':'Blacklisted!','warn');closeModal('blModal');renderBLTable();dbUpsert('blacklist',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')})}
+function toggleBL(id){var b=DB.blacklist.find(function(x){return x.id===id});if(!b)return;b.status=b.status==='active'?'removed':'active';renderBLTable();toast(b.status==='active'?'Restored':'Removed',b.status==='active'?'warn':'success');dbUpsert('blacklist',b).catch(function(e){toast('Background save failed: '+e.message,'error')})}
+function deleteBL(id){var b=DB.blacklist.find(function(x){return x.id===id});confirmDelete(b?b.partyName:'this entry',function(){DB.blacklist=DB.blacklist.filter(function(x){return x.id!==id});renderBLTable();toast('Deleted','warn');closeModal('deleteModal');dbDelete('blacklist',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 
 // ── NOTES ──
 function renderNotes(){var el=document.getElementById('notesList');if(!el)return;var pf=document.getElementById('notePriorityFilter').value||'';var rows=DB.notes.filter(function(n){return !pf||n.priority===pf}).sort(function(a,b){var o={urgent:0,high:1,normal:2};return(o[a.priority]||2)-(o[b.priority]||2)});if(!rows.length){el.innerHTML='<div class="empty">No notes yet</div>';return}el.innerHTML=rows.map(function(n){return'<div style="background:var(--bg3);border-radius:8px;padding:11px;margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;gap:6px"><span style="font-size:12.5px;font-weight:700;color:#fff;flex:1">'+n.title+'</span><span class="tag '+(n.priority==='urgent'?'tr':n.priority==='high'?'ty':'tb')+'">'+n.priority+'</span></div><p style="font-size:11.5px;color:var(--text2);margin-bottom:6px;line-height:1.5">'+n.body+'</p><div style="display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--text3)"><span>→ '+(n.assign==='All'?'All Users':n.assign)+' · '+fmtDate(n.date)+'</span><div class="tbl-actions"><button class="btn btn-info btn-xs" onclick="editNote(\''+n.id+'\')">✏️</button><button class="btn btn-danger btn-xs" onclick="deleteNote(\''+n.id+'\')">🗑️</button></div></div></div>'}).join('')}
-function saveNote(){var title=document.getElementById('note-title').value.trim();var body=document.getElementById('note-body').value.trim();if(!title||!body){toast('Title and content required','error');return}var rec;if(S.editingId.note){rec=DB.notes.find(function(x){return x.id===S.editingId.note});if(rec){rec.title=title;rec.assign=document.getElementById('note-assign').value;rec.priority=document.getElementById('note-priority').value;rec.body=body}}else{rec={id:'N'+uid(),title:title,assign:document.getElementById('note-assign').value,priority:document.getElementById('note-priority').value,body:body,createdBy:S.user.username,date:today()};DB.notes.unshift(rec)}dbUpsert('notes',rec).then(function(){toast(S.editingId.note?'Updated!':'Saved!','success');resetNoteForm();renderNotes()}).catch(function(e){toast('Failed: '+e.message,'error')})}
+function saveNote(){var title=document.getElementById('note-title').value.trim();var body=document.getElementById('note-body').value.trim();if(!title||!body){toast('Title and content required','error');return}var rec;if(S.editingId.note){rec=DB.notes.find(function(x){return x.id===S.editingId.note});if(rec){rec.title=title;rec.assign=document.getElementById('note-assign').value;rec.priority=document.getElementById('note-priority').value;rec.body=body}}else{rec={id:'N'+uid(),title:title,assign:document.getElementById('note-assign').value,priority:document.getElementById('note-priority').value,body:body,createdBy:S.user.username,date:today()};DB.notes.unshift(rec)}toast(S.editingId.note?'Updated!':'Saved!','success');resetNoteForm();renderNotes();dbUpsert('notes',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')})}
 function editNote(id){var n=DB.notes.find(function(x){return x.id===id});if(!n)return;S.editingId.note=id;document.getElementById('note-title').value=n.title;document.getElementById('note-assign').value=n.assign;document.getElementById('note-priority').value=n.priority;document.getElementById('note-body').value=n.body;document.getElementById('noteFormTitle').textContent='✏️ Edit Note';document.getElementById('noteCancelBtn').style.display='';document.getElementById('noteSaveBtn').textContent='💾 Update Note'}
-function deleteNote(id){var n=DB.notes.find(function(x){return x.id===id});confirmDelete(n?n.title:'this note',function(){dbDelete('notes',id).then(function(){DB.notes=DB.notes.filter(function(x){return x.id!==id});renderNotes();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deleteNote(id){var n=DB.notes.find(function(x){return x.id===id});confirmDelete(n?n.title:'this note',function(){DB.notes=DB.notes.filter(function(x){return x.id!==id});renderNotes();toast('Deleted','warn');closeModal('deleteModal');dbDelete('notes',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 function resetNoteForm(){S.editingId.note=null;document.getElementById('noteFormTitle').textContent='📝 Add Note';document.getElementById('noteCancelBtn').style.display='none';document.getElementById('noteSaveBtn').textContent='📌 Save Note';['note-title','note-body'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('note-priority').value='normal'}
 
 // ── MESSAGES ──
@@ -2572,7 +2695,7 @@ function setActiveChat(username){S.activeChatUser=username;DB.messages.forEach(f
 function buildChatMessages(){var el=document.getElementById('chatMessages');if(!el)return;var hdr=document.getElementById('chatHeader');var contact=DB.users.find(function(u){return u.username===S.activeChatUser});if(hdr&&contact)hdr.innerHTML='<div class="avatar" style="width:32px;height:32px;font-size:13px;background:var(--primary3);color:var(--primary)">'+(contact.name?contact.name[0]:'?')+'</div><div><div style="font-size:12.5px;font-weight:700;color:#fff">'+contact.name+'</div><div style="font-size:10px;color:var(--success)">● '+(contact.status==='active'?'Online':'Offline')+'</div></div>';if(!S.activeChatUser){el.innerHTML='<div class="empty">Select a conversation</div>';return}var msgs=DB.messages.filter(function(m){return(m.from===S.user.username&&m.to===S.activeChatUser)||(m.from===S.activeChatUser&&m.to===S.user.username)});el.innerHTML=msgs.map(function(m){var isMe=m.from===S.user.username;return'<div style="display:flex;flex-direction:column;align-items:'+(isMe?'flex-end':'flex-start')+'"><div style="max-width:70%;padding:8px 12px;border-radius:'+(isMe?'12px 12px 2px 12px':'12px 12px 12px 2px')+';background:'+(isMe?'rgba(79,142,247,.2)':'var(--bg3)')+';color:var(--text);font-size:12.5px">'+m.text+'</div><span style="font-size:9.5px;color:var(--text3);margin-top:2px">'+m.time+'</span></div>'}).join('');el.scrollTop=el.scrollHeight}
 function sendMsg(){var inp=document.getElementById('msgInput');if(!inp||!inp.value.trim()||!S.activeChatUser)return;var rec={id:'MSG'+uid(),from:S.user.username,to:S.activeChatUser,text:inp.value.trim(),time:new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}),date:today(),read:'false'};DB.messages.push(rec);inp.value='';buildChatList();buildChatMessages();dbUpsert('messages',rec).catch(function(e){toast('Not saved: '+e.message,'error')})}
 function openNewMsgModal(){populateDropdowns();openModal('newMsgModal')}
-function sendNewMsg(){var to=document.getElementById('nm-to').value;var body=document.getElementById('nm-body').value.trim();if(!body){toast('Enter a message','error');return}var rec={id:'MSG'+uid(),from:S.user.username,to:to,text:body,time:new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}),date:today(),read:'false'};DB.messages.push(rec);S.activeChatUser=to;closeModal('newMsgModal');renderMessages();dbUpsert('messages',rec).then(function(){toast('Sent!','success')}).catch(function(e){toast('Failed: '+e.message,'error')})}
+function sendNewMsg(){var to=document.getElementById('nm-to').value;var body=document.getElementById('nm-body').value.trim();if(!body){toast('Enter a message','error');return}var rec={id:'MSG'+uid(),from:S.user.username,to:to,text:body,time:new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}),date:today(),read:'false'};DB.messages.push(rec);S.activeChatUser=to;closeModal('newMsgModal');renderMessages();toast('Sent!','success');dbUpsert('messages',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')})}
 
 // ── VOUCHER PRINT ──
 function printVoucher(type,id){
@@ -2616,14 +2739,14 @@ function savePurchase(){
   var isEdit=!!S.editingId.purchase;var tax=parseFloat(document.getElementById('pur-tax').value)||0;var rec;
   if(isEdit){rec=DB.purchases.find(function(x){return x.id===S.editingId.purchase});if(rec){rec.vendorId=document.getElementById('pur-vendorId').value;rec.vendorName=vendor;rec.cat=document.getElementById('pur-cat').value;rec.items=document.getElementById('pur-items').value;rec.amount=amt;rec.tax=tax;rec.totalAmount=amt+tax;rec.mode=document.getElementById('pur-mode').value;rec.entryType=document.getElementById('pur-entryType').value;rec.payStatus=document.getElementById('pur-payStatus').value;rec.date=document.getElementById('pur-date').value;rec.dueDate=document.getElementById('pur-dueDate').value;rec.narration=document.getElementById('pur-narration').value}}
   else{var maxN=0;DB.purchases.forEach(function(r){var m=r.no&&r.no.match(/(\d+)$/);if(m)maxN=Math.max(maxN,parseInt(m[1]))});rec={id:uid(),no:'PUR-'+new Date().getFullYear()+'-'+numPad(maxN+1,S.settings.voucher.pad||4),vendorId:document.getElementById('pur-vendorId').value,vendorName:vendor,cat:document.getElementById('pur-cat').value,items:document.getElementById('pur-items').value,amount:amt,tax:tax,totalAmount:amt+tax,mode:document.getElementById('pur-mode').value,entryType:document.getElementById('pur-entryType').value,payStatus:document.getElementById('pur-payStatus').value,date:document.getElementById('pur-date').value,dueDate:document.getElementById('pur-dueDate').value,narration:document.getElementById('pur-narration').value,createdBy:S.user.username,createdAt:new Date().toISOString()};DB.purchases.unshift(rec)}
-  setBtnLoading('purSaveBtn','⏳ Saving...',true);
-  dbUpsert('purchases',rec).then(function(){
-    if(rec.entryType==='Credit'&&!isEdit){var ppRec={id:'PP'+rec.id,no:rec.no,party:rec.vendorId,partyName:rec.vendorName,cat:rec.cat,amount:rec.totalAmount,mode:rec.mode,date:rec.date,narration:'Purchase: '+rec.items,status:'approved',submittedBy:S.user.username,approvedBy:S.user.username,createdBy:S.user.username,createdAt:rec.createdAt};DB.partyPayments.unshift(ppRec);dbUpsert('partyPayments',ppRec)}
-    toast(isEdit?'Purchase updated!':'Saved: '+rec.no,'success');resetPurchaseForm();renderPurchasesTable();renderIETable();renderDashboard();setBtnLoading('purSaveBtn','💾 Save Purchase',false);
-  }).catch(function(e){toast('Save failed: '+e.message,'error');setBtnLoading('purSaveBtn','💾 Save Purchase',false)});
+  // If this is a Credit purchase, it also creates an approved party-payment record
+  // (accounts payable) — build that immediately too so both show up right away.
+  if(rec.entryType==='Credit'&&!isEdit){var ppRec={id:'PP'+rec.id,no:rec.no,party:rec.vendorId,partyName:rec.vendorName,cat:rec.cat,amount:rec.totalAmount,mode:rec.mode,date:rec.date,narration:'Purchase: '+rec.items,status:'approved',submittedBy:S.user.username,approvedBy:S.user.username,createdBy:S.user.username,createdAt:rec.createdAt};DB.partyPayments.unshift(ppRec);dbUpsert('partyPayments',ppRec).catch(function(e){toast('Background save failed: '+e.message,'error')})}
+  toast(isEdit?'Purchase updated!':'Saved: '+rec.no,'success');resetPurchaseForm();renderPurchasesTable();renderIETable();renderDashboard();
+  dbUpsert('purchases',rec).catch(function(e){toast('Background save failed, will retry: '+e.message,'error')});
 }
 function editPurchase(id){var r=DB.purchases.find(function(x){return x.id===id});if(!r)return;S.editingId.purchase=id;document.getElementById('pur-vendorId').value=r.vendorId||'';document.getElementById('pur-vendor').value=r.vendorName||'';document.getElementById('pur-cat').value=r.cat||'Supplies';document.getElementById('pur-items').value=r.items||'';document.getElementById('pur-amount').value=r.amount||0;document.getElementById('pur-tax').value=r.tax||0;document.getElementById('pur-mode').value=r.mode||'Cash';document.getElementById('pur-entryType').value=r.entryType||'Debit';document.getElementById('pur-payStatus').value=r.payStatus||'Paid';document.getElementById('pur-date').value=r.date||today();document.getElementById('pur-dueDate').value=r.dueDate||'';document.getElementById('pur-narration').value=r.narration||'';updatePurchaseTotal();document.getElementById('purFormTitle').textContent='✏️ Edit Purchase Entry';document.getElementById('purCancelBtn').style.display='';document.getElementById('purSaveBtn').textContent='💾 Update Purchase';nav('purchases');window.scrollTo(0,0)}
-function deletePurchase(id){var r=DB.purchases.find(function(x){return x.id===id});confirmDelete(r?r.no:'this purchase',function(){dbDelete('purchases',id).then(function(){DB.purchases=DB.purchases.filter(function(x){return x.id!==id});renderPurchasesTable();renderIETable();renderDashboard();toast('Deleted','warn');closeModal('deleteModal')}).catch(function(e){toast('Failed: '+e.message,'error');closeModal('deleteModal')})})}
+function deletePurchase(id){var r=DB.purchases.find(function(x){return x.id===id});confirmDelete(r?r.no:'this purchase',function(){DB.purchases=DB.purchases.filter(function(x){return x.id!==id});renderPurchasesTable();renderIETable();renderDashboard();toast('Deleted','warn');closeModal('deleteModal');dbDelete('purchases',id).catch(function(e){toast('Background delete failed: '+e.message,'error')})})}
 function resetPurchaseForm(){S.editingId.purchase=null;document.getElementById('purFormTitle').textContent='🛒 New Purchase Entry';document.getElementById('purCancelBtn').style.display='none';document.getElementById('purSaveBtn').textContent='💾 Save Purchase';['pur-vendor','pur-items','pur-amount','pur-tax','pur-narration','pur-dueDate'].forEach(function(id){var e=document.getElementById(id);if(e)e.value=''});document.getElementById('pur-vendorId').value='';document.getElementById('pur-cat').value='Supplies';document.getElementById('pur-mode').value='Cash';document.getElementById('pur-entryType').value='Debit';document.getElementById('pur-payStatus').value='Paid';document.getElementById('pur-date').value=today();updatePurchaseTotal()}
 function updatePurchaseTotal(){var amt=parseFloat(document.getElementById('pur-amount').value)||0;var tax=parseFloat(document.getElementById('pur-tax').value)||0;var tot=document.getElementById('pur-totalDisplay');if(tot)tot.textContent=fmt(amt+tax)}
 function updateEntryBanner(){var t=document.getElementById('pur-entryType').value;var b=document.getElementById('purEntryBanner');if(!b)return;if(t==='Credit'){b.style.background='var(--info2)';b.style.borderColor='rgba(139,92,246,.3)';b.style.color='#c4b5fd';b.textContent='💳 Credit Entry — Amount payable to vendor (Accounts Payable)'}else{b.style.background='var(--success2)';b.style.borderColor='rgba(16,185,129,.3)';b.style.color='#6ee7b7';b.textContent='💳 Debit Entry — Payment made immediately'}}
@@ -2877,15 +3000,11 @@ function saveInvoice(){
     DB.invoices.unshift(rec);
   }
 
-  setBtnLoading('invSaveBtn','⏳ Saving...',true);
-  dbUpsert('invoices', rec).then(function(){
-    toast(isEdit ? 'Invoice updated!' : 'Invoice saved: '+rec.no, 'success');
-    resetInvoiceForm();
-    renderInvoiceTable();
-    setBtnLoading('invSaveBtn','💾 Save Invoice',false);
-  }).catch(function(e){
-    toast('Save failed: '+e.message,'error');
-    setBtnLoading('invSaveBtn','💾 Save Invoice',false);
+  toast(isEdit ? 'Invoice updated!' : 'Invoice saved: '+rec.no, 'success');
+  resetInvoiceForm();
+  renderInvoiceTable();
+  dbUpsert('invoices', rec).catch(function(e){
+    toast('Background save failed, will retry: '+e.message,'error');
   });
 }
 
@@ -2921,12 +3040,11 @@ function editInvoice(id){
 function deleteInvoice(id){
   var r = DB.invoices.find(function(x){ return x.id===id; });
   confirmDelete(r ? r.no : 'this invoice', function(){
-    dbDelete('invoices', id).then(function(){
-      DB.invoices = DB.invoices.filter(function(x){ return x.id!==id; });
-      renderInvoiceTable();
-      toast('Invoice deleted','warn');
-      closeModal('deleteModal');
-    }).catch(function(e){ toast('Failed: '+e.message,'error'); closeModal('deleteModal'); });
+    DB.invoices = DB.invoices.filter(function(x){ return x.id!==id; });
+    renderInvoiceTable();
+    toast('Invoice deleted','warn');
+    closeModal('deleteModal');
+    dbDelete('invoices', id).catch(function(e){ toast('Background delete failed: '+e.message,'error'); });
   });
 }
 
@@ -3315,7 +3433,12 @@ function _bsTotalDaysUntil(y, m, d) {
 }
 function adToBs(adDate) {
   // adDate: JS Date object or 'YYYY-MM-DD' string
-  if(typeof adDate === 'string') { var parts=adDate.split('-'); adDate=new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2])); }
+  if(!adDate){ adDate = new Date(); }
+  else if(typeof adDate === 'string') { var parts=adDate.split('-'); adDate=new Date(parseInt(parts[0]),parseInt(parts[1])-1,parseInt(parts[2])); }
+  // Guard against invalid/unparseable dates (e.g. an empty or malformed date field) —
+  // fall back to today's real date instead of silently defaulting to the BS anchor
+  // (Baisakh 1), which was the source of dates randomly "resetting".
+  if(isNaN(adDate.getTime())){ adDate = new Date(); }
   // Normalize to local midnight so time-of-day never causes an early/late day rollover
   var normDate = new Date(adDate.getFullYear(), adDate.getMonth(), adDate.getDate());
   var diffMs  = normDate - BS_ANCHOR_AD;
