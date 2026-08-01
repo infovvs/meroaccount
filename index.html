@@ -248,7 +248,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
           <div class="card-head"><h3 id="dashUsersOverviewTitle">👥 All Users — Income &amp; Expense Overview (Today)</h3><button class="btn btn-ghost btn-sm" id="dashUsersOverviewLink" onclick="nav('usersCashBook')">View Full Cash Book →</button></div>
           <div class="tbl-wrap">
             <table>
-              <thead><tr><th>User</th><th>Today's Income</th><th>Today's Expense</th><th>Today's Net</th><th>Cash In Hand</th></tr></thead>
+              <thead><tr><th>User</th><th>Opening Balance</th><th>Total Income</th><th>Total Expenses</th><th>Balance</th></tr></thead>
               <tbody id="dashUsersOverviewTable"></tbody>
             </table>
           </div>
@@ -1161,7 +1161,7 @@ tr:hover td{background:var(--card2)}tr:last-child td{border-bottom:none}.tbl-act
 //  Deploy gas_backend.js as Web App, then paste the URL below
 //  Example: 'https://script.google.com/macros/s/AKfy.../exec'
 // ═══════════════════════════════════════════════════════════
-var GAS_URL = 'https://script.google.com/macros/s/AKfycbxUD72bSo5yLfWWaDyyXzqLSxhZCAQbcVCMmyFi-t0P5bn6PD5PPj8oU20gBMbjxAd1/exec';
+var GAS_URL ='https://script.google.com/macros/s/AKfycbxUD72bSo5yLfWWaDyyXzqLSxhZCAQbcVCMmyFi-t0P5bn6PD5PPj8oU20gBMbjxAd1/exec';
 // ═══════════════════════════════════════════════════════════
 
 var DB={parties:[],users:[],cashReceipts:[],partyPayments:[],miscIncome:[],blacklist:[],notes:[],messages:[],settings:[],purchases:[],invoices:[]};
@@ -1562,13 +1562,46 @@ function renderDashboard(){
 }
 function buildDashChart(){
   var el=document.getElementById('dashChart');if(!el)return;
-  var inc=[38,42,35,48,52,44,56,48,62,58,65,70],exp=[22,18,24,20,28,22,30,26,32,28,35,30],lbl=['A','M','J','J','A','S','O','N','D','J','F','M'];
-  el.innerHTML=inc.map(function(v,i){return'<div class="bar-grp" style="flex-direction:column;gap:0"><div style="flex:1;display:flex;align-items:flex-end;gap:2px"><div class="bar" style="height:'+Math.round(v/70*90)+'%;background:var(--primary);opacity:.8;flex:1"></div><div class="bar" style="height:'+Math.round(exp[i]/70*90)+'%;background:var(--danger);opacity:.7;flex:1"></div></div><div class="bar-lbl">'+lbl[i]+'</div></div>'}).join('');
+  var isAdmin=S.user&&S.user.role==='Administrator';
+  var myCR=isAdmin?DB.cashReceipts:DB.cashReceipts.filter(function(r){return r.createdBy===S.user.username;});
+  var myMI=isAdmin?DB.miscIncome:DB.miscIncome.filter(function(r){return r.createdBy===S.user.username;});
+  var myPP=isAdmin?DB.partyPayments:DB.partyPayments.filter(function(r){return r.createdBy===S.user.username;});
+  // Build the last 12 calendar months (oldest first)
+  var months=[];
+  var now=new Date();
+  for(var i=11;i>=0;i--){
+    var d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    months.push({key:d.getFullYear()+'-'+numPad(d.getMonth()+1,2),lbl:d.toLocaleDateString('en-IN',{month:'short'}).charAt(0)});
+  }
+  var incByMonth={},expByMonth={};
+  months.forEach(function(m){incByMonth[m.key]=0;expByMonth[m.key]=0;});
+  myCR.forEach(function(r){var k=(r.date||'').substring(0,7);if(k in incByMonth)incByMonth[k]+=parseFloat(r.totalAmount||r.amount||0);});
+  myMI.forEach(function(r){var k=(r.date||'').substring(0,7);if(k in incByMonth)incByMonth[k]+=parseFloat(r.amount||0);});
+  myPP.filter(function(p){return p.status==='approved';}).forEach(function(r){var k=(r.date||'').substring(0,7);if(k in expByMonth)expByMonth[k]+=parseFloat(r.amount||0);});
+  var maxVal=Math.max.apply(null,months.map(function(m){return Math.max(incByMonth[m.key],expByMonth[m.key]);}).concat([1]));
+  el.innerHTML=months.map(function(m){
+    var incH=Math.round((incByMonth[m.key]/maxVal)*90);
+    var expH=Math.round((expByMonth[m.key]/maxVal)*90);
+    return '<div class="bar-grp" style="flex-direction:column;gap:0" title="'+m.key+': Income '+fmt(incByMonth[m.key])+' / Expense '+fmt(expByMonth[m.key])+'"><div style="flex:1;display:flex;align-items:flex-end;gap:2px"><div class="bar" style="height:'+incH+'%;background:var(--primary);opacity:.8;flex:1"></div><div class="bar" style="height:'+expH+'%;background:var(--danger);opacity:.7;flex:1"></div></div><div class="bar-lbl">'+m.lbl+'</div></div>';
+  }).join('');
 }
 function buildIncomeBreakdown(){
   var el=document.getElementById('incomeBreakdown');if(!el)return;
-  var items=[{l:'Tuition Fees',p:49.7,c:'var(--primary)',a:240000},{l:'Exam Fees',p:17.6,c:'var(--success)',a:85000},{l:'Transport',p:15,c:'var(--info)',a:72500},{l:'Misc',p:17.7,c:'var(--warning)',a:85000}];
-  el.innerHTML=items.map(function(i){return'<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span>'+i.l+'</span><span class="pos">'+fmt(i.a)+'</span></div><div class="progress"><div class="progress-fill" style="width:'+i.p+'%;background:'+i.c+'"></div></div></div>'}).join('');
+  var isAdmin=S.user&&S.user.role==='Administrator';
+  var myCR=isAdmin?DB.cashReceipts:DB.cashReceipts.filter(function(r){return r.createdBy===S.user.username;});
+  var myMI=isAdmin?DB.miscIncome:DB.miscIncome.filter(function(r){return r.createdBy===S.user.username;});
+  var byCat={};
+  myCR.forEach(function(r){var c=r.cat||'Other';byCat[c]=(byCat[c]||0)+parseFloat(r.totalAmount||r.amount||0);});
+  myMI.forEach(function(r){var c=r.source||'Other';byCat[c]=(byCat[c]||0)+parseFloat(r.amount||0);});
+  var cats=Object.keys(byCat).map(function(k){return{l:k,a:byCat[k]};}).sort(function(a,b){return b.a-a.a;});
+  var total=cats.reduce(function(s,c){return s+c.a;},0);
+  var colors=['var(--primary)','var(--success)','var(--info)','var(--warning)','var(--danger)'];
+  if(!cats.length||total<=0){ el.innerHTML='<div class="empty">No income recorded yet</div>'; return; }
+  var top=cats.slice(0,5);
+  el.innerHTML=top.map(function(c,i){
+    var pct=total>0?(c.a/total*100):0;
+    return '<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span>'+c.l+'</span><span class="pos">'+fmt(c.a)+'</span></div><div class="progress"><div class="progress-fill" style="width:'+pct.toFixed(1)+'%;background:'+colors[i%colors.length]+'"></div></div></div>';
+  }).join('');
 }
 function renderDashTxns(){
   var el=document.getElementById('dashTxns');if(!el)return;
@@ -1596,24 +1629,24 @@ function renderDashUsersOverview(){
   card.style.display='block';
   var titleEl=document.getElementById('dashUsersOverviewTitle');
   var linkBtn=document.getElementById('dashUsersOverviewLink');
-  if(titleEl) titleEl.textContent = isAdmin ? '👥 All Users — Income & Expense Overview (Today)' : '👤 My Income & Expense Overview (Today)';
+  if(titleEl) titleEl.textContent = isAdmin ? '👥 All Users — Income, Expenses & Balance' : '👤 My Income, Expenses & Balance';
   if(linkBtn) linkBtn.style.display = isAdmin ? '' : 'none';
   var el=document.getElementById('dashUsersOverviewTable');if(!el)return;
-  var td=today();
   var userList = isAdmin ? DB.users : DB.users.filter(function(u){return u.username===S.user.username;});
   var rows=userList.map(function(u){
-    var incToday=getUserIncomeRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
-    var expToday=getUserExpenseRows(u.username,td).reduce(function(s,r){return s+r.amount;},0);
-    var cash=computeCashInHand(u.username);
-    return {name:u.name,username:u.username,inc:incToday,exp:expToday,net:incToday-expToday,cash:cash};
+    var opening=getUserOpeningBalance(u.username);
+    var totalIncome=getUserIncomeRows(u.username,null).reduce(function(s,r){return s+r.amount;},0);
+    var totalExpense=getUserExpenseRows(u.username,null).reduce(function(s,r){return s+r.amount;},0);
+    var balance=opening+totalIncome-totalExpense;
+    return {name:u.name,username:u.username,opening:opening,inc:totalIncome,exp:totalExpense,balance:balance};
   });
   if(!rows.length){el.innerHTML='<tr><td colspan="5"><div class="empty">No users found</div></td></tr>';return}
   el.innerHTML=rows.map(function(r){
     return '<tr><td><div style="display:flex;align-items:center;gap:8px"><div class="avatar" style="width:24px;height:24px;font-size:10px;background:var(--primary3);color:var(--primary)">'+(r.name?r.name[0]:'?')+'</div><div style="font-size:12px;font-weight:600;color:#fff">'+r.name+'</div></div></td>'
+      +'<td style="font-weight:600">'+fmt(r.opening)+'</td>'
       +'<td class="pos" style="font-weight:600">'+fmt(r.inc)+'</td>'
       +'<td class="neg" style="font-weight:600">'+fmt(r.exp)+'</td>'
-      +'<td style="font-weight:600;color:'+(r.net>=0?'var(--success)':'var(--danger)')+'">'+fmt(r.net)+'</td>'
-      +'<td style="font-weight:700;color:'+(r.cash>=0?'var(--success)':'var(--danger)')+'">'+fmt(r.cash)+'</td></tr>';
+      +'<td style="font-weight:700;color:'+(r.balance>=0?'var(--success)':'var(--danger)')+'">'+fmt(r.balance)+'</td></tr>';
   }).join('');
 }
 
@@ -3302,9 +3335,38 @@ function printInvoiceList(){
 //  BIKRAM SAMBAT (BS) DATE CONVERSION
 //  Anchor: 2082-01-01 BS = April 14, 2025 AD
 // ─────────────────────────────────────────────
+// ═══ AUTHORITATIVE Bikram Sambat calendar data (1975-2099 BS) ═══
+// Sourced from the verified dataset used by @remotemerge/nepali-date-converter,
+// which itself is anchored against the same epoch (Baisakh 1, 1975 BS = 13 April
+// 1918 AD) used by widely-referenced Nepali calendar authorities. This replaces
+// an earlier hand-approximated table that only happened to be correct for a
+// couple of spot-checked dates and was wrong for most others.
 var BS_MONTHS_DATA = [
-  // Days in each BS month for years 2000-2090 BS
-  // Format: [year_bs, [days_m1..m12]]
+  [1975,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [1976,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [1977,[30,32,31,32,31,31,29,30,30,29,29,31]],
+  [1978,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1979,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [1980,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [1981,[31,31,31,32,31,31,29,30,30,29,29,31]],
+  [1982,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1983,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [1984,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [1985,[31,31,31,32,31,31,29,30,30,29,30,30]],
+  [1986,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1987,[31,32,31,32,31,30,30,29,30,29,30,30]],
+  [1988,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [1989,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [1990,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1991,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [1992,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [1993,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [1994,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1995,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [1996,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [1997,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [1998,[31,31,32,31,32,30,30,29,30,29,30,30]],
+  [1999,[31,32,31,32,31,30,30,30,29,29,30,31]],
   [2000,[30,32,31,32,31,30,30,30,29,30,29,31]],
   [2001,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2002,[31,31,32,32,31,30,30,29,30,29,30,30]],
@@ -3313,123 +3375,116 @@ var BS_MONTHS_DATA = [
   [2005,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2006,[31,31,32,32,31,30,30,29,30,29,30,30]],
   [2007,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2008,[31,31,31,32,31,30,30,30,29,30,29,31]],
+  [2008,[31,31,31,32,31,31,29,30,30,29,29,31]],
   [2009,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2010,[31,31,32,32,31,30,30,29,30,29,30,30]],
   [2011,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2012,[31,31,31,32,31,30,30,30,29,30,29,31]],
+  [2012,[31,31,31,32,31,31,29,30,30,29,30,30]],
   [2013,[31,31,32,31,31,31,30,29,30,29,30,30]],
   [2014,[31,31,32,32,31,30,30,29,30,29,30,30]],
   [2015,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2016,[31,31,31,32,31,30,30,30,29,30,29,31]],
+  [2016,[31,31,31,32,31,31,29,30,30,29,30,30]],
   [2017,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2018,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2019,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2020,[31,31,31,32,31,30,30,30,29,30,29,31]],
+  [2018,[31,32,31,32,31,30,30,29,30,29,30,30]],
+  [2019,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2020,[31,31,31,32,31,31,30,29,30,29,30,30]],
   [2021,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2022,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2023,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2024,[31,31,31,32,31,30,30,30,29,30,29,31]],
+  [2022,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [2023,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2024,[31,31,31,32,31,31,30,29,30,29,30,30]],
   [2025,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2026,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2027,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2028,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2029,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2030,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2031,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2032,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2033,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2034,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2035,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2036,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2037,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2038,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2039,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2040,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2041,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2042,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2043,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2044,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2045,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2046,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2047,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2048,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2049,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2050,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2051,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2052,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2053,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2054,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2055,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2056,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2057,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2058,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2059,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2060,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2061,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2062,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2063,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2064,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2065,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2066,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2067,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2068,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2069,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2070,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2071,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2072,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2073,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2074,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2075,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2076,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2077,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2078,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2079,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2080,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2081,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2082,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2083,[31,32,32,31,31,30,30,30,29,29,30,31]],
-  [2084,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2085,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2086,[31,31,32,32,31,30,30,29,30,29,30,30]],
-  [2087,[31,32,31,32,31,30,30,30,29,29,30,31]],
-  [2088,[31,31,31,32,31,30,30,30,29,30,29,31]],
-  [2089,[31,31,32,31,31,31,30,29,30,29,30,30]],
-  [2090,[31,31,32,32,31,30,30,29,30,29,30,30]]
+  [2026,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2027,[30,32,31,32,31,30,30,30,29,30,29,31]],
+  [2028,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2029,[31,31,32,31,32,30,30,29,30,29,30,30]],
+  [2030,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2031,[30,32,31,32,31,30,30,30,29,30,29,31]],
+  [2032,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2033,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2034,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2035,[30,32,31,32,31,31,29,30,30,29,29,31]],
+  [2036,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2037,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2038,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2039,[31,31,31,32,31,31,29,30,30,29,30,30]],
+  [2040,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2041,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2042,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2043,[31,31,31,32,31,31,29,30,30,29,30,30]],
+  [2044,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2045,[31,32,31,32,31,30,30,29,30,29,30,30]],
+  [2046,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2047,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [2048,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2049,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [2050,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2051,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [2052,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2053,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [2054,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2055,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2056,[31,31,32,31,32,30,30,29,30,29,30,30]],
+  [2057,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2058,[30,32,31,32,31,30,30,30,29,30,29,31]],
+  [2059,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2060,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2061,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2062,[30,32,31,32,31,31,29,30,29,30,29,31]],
+  [2063,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2064,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2065,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2066,[31,31,31,32,31,31,29,30,30,29,29,31]],
+  [2067,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2068,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2069,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2070,[31,31,31,32,31,31,29,30,30,29,30,30]],
+  [2071,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2072,[31,32,31,32,31,30,30,29,30,29,30,30]],
+  [2073,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2074,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [2075,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2076,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [2077,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2078,[31,31,31,32,31,31,30,29,30,29,30,30]],
+  [2079,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2080,[31,32,31,32,31,30,30,30,29,29,30,30]],
+  [2081,[31,32,31,32,31,30,30,30,29,30,29,31]],
+  [2082,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2083,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2084,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2085,[30,32,31,32,31,30,30,30,29,30,29,31]],
+  [2086,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2087,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2088,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2089,[30,32,31,32,31,30,30,30,29,30,29,31]],
+  [2090,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2091,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2092,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2093,[31,31,31,32,31,31,29,30,30,29,29,31]],
+  [2094,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2095,[31,31,32,32,31,30,30,29,30,29,30,30]],
+  [2096,[31,32,31,32,31,30,30,30,29,29,30,31]],
+  [2097,[31,31,31,32,31,31,29,30,30,29,30,30]],
+  [2098,[31,31,32,31,31,31,30,29,30,29,30,30]],
+  [2099,[31,31,32,32,31,30,30,29,30,29,30,30]]
 ];
 var BS_MONTH_NAMES = ['Baisakh','Jestha','Ashadh','Shrawan','Bhadra','Ashwin','Kartik','Mangsir','Poush','Magh','Falgun','Chaitra'];
 var BS_MONTH_NAMES_NP = ['बैशाख','जेठ','असार','साउन','भाद्र','असोज','कार्तिक','मंसिर','पुष','माघ','फाल्गुन','चैत्र'];
 // Anchor: 2082-01-01 BS = April 14, 2025 AD = days since epoch
-var BS_ANCHOR_AD  = new Date(2025, 3, 13); // April 13 2025 (Baisakh 1, 2082 BS)
-var BS_ANCHOR_BS  = {y:2082, m:1, d:1};
+var BS_ANCHOR_AD  = new Date(1918, 3, 13); // April 13, 1918 AD = Baisakh 1, 1975 BS (authoritative epoch)
+var BS_ANCHOR_BS  = {y:1975, m:1, d:1};
 
+var _bsYearMap = {};
+BS_MONTHS_DATA.forEach(function(row){ _bsYearMap[row[0]] = row[1]; });
 function _bsDaysInMonth(y, m) {
-  var row = BS_MONTHS_DATA.find(function(r){ return r[0]===y; });
-  return row ? row[1][m-1] : 30;
+  var row = _bsYearMap[y];
+  return row ? row[m-1] : 30;
 }
-function _bsTotalDaysUntil(y, m, d) {
-  // Total days from BS_ANCHOR_BS to given BS date
-  var anchor = BS_ANCHOR_BS;
-  var days = 0;
-  if(y > anchor.y || (y===anchor.y && m > anchor.m) || (y===anchor.y && m===anchor.m && d >= anchor.d)) {
-    // Forward
-    var cy = anchor.y, cm = anchor.m, cd = anchor.d;
-    while(cy < y || (cy===y && cm < m) || (cy===y && cm===m && cd < d)) {
-      days++;
-      cd++;
-      if(cd > _bsDaysInMonth(cy, cm)) { cd=1; cm++; }
-      if(cm > 12) { cm=1; cy++; }
-    }
-  } else {
-    // Backward
-    var cy = anchor.y, cm = anchor.m, cd = anchor.d;
-    while(cy > y || (cy===y && cm > m) || (cy===y && cm===m && cd > d)) {
-      days--;
-      cd--;
-      if(cd < 1) { cm--; if(cm < 1){ cm=12; cy--; } cd=_bsDaysInMonth(cy,cm); }
-    }
-  }
-  return days;
+function _bsYearTotal(y) {
+  var row = _bsYearMap[y];
+  if(!row) return 365;
+  var t=0; for(var i=0;i<12;i++) t+=row[i];
+  return t;
 }
 function adToBs(adDate) {
   // adDate: JS Date object or 'YYYY-MM-DD' string
@@ -3443,28 +3498,41 @@ function adToBs(adDate) {
   var normDate = new Date(adDate.getFullYear(), adDate.getMonth(), adDate.getDate());
   var diffMs  = normDate - BS_ANCHOR_AD;
   var diffDays = Math.round(diffMs / 86400000);
-  // Walk from anchor BS date
-  var cy = BS_ANCHOR_BS.y, cm = BS_ANCHOR_BS.m, cd = BS_ANCHOR_BS.d;
-  if(diffDays >= 0) {
-    for(var i=0; i<diffDays; i++) {
-      cd++;
-      if(cd > _bsDaysInMonth(cy, cm)) { cd=1; cm++; }
-      if(cm > 12) { cm=1; cy++; }
-    }
-  } else {
-    for(var i=0; i>diffDays; i--) {
-      cd--;
-      if(cd < 1) { cm--; if(cm<1){ cm=12; cy--; } cd=_bsDaysInMonth(cy,cm); }
-    }
+  if(diffDays < 0){
+    // Before the supported epoch (13 Apr 1918) — fall back to today rather than
+    // returning nonsense.
+    return adToBs(new Date());
   }
-  return {y:cy, m:cm, d:cd};
+  // Fast-forward whole years first (instead of a slow day-by-day walk across
+  // possibly 100+ years), then resolve the remaining months/days within that year.
+  var y = BS_ANCHOR_BS.y;
+  while(true){
+    var yearTotal = _bsYearTotal(y);
+    if(diffDays < yearTotal || !_bsYearMap[y+1]) break;
+    diffDays -= yearTotal;
+    y++;
+  }
+  var m = 1;
+  while(m <= 12){
+    var mLen = _bsDaysInMonth(y, m);
+    if(diffDays < mLen) break;
+    diffDays -= mLen;
+    m++;
+  }
+  var d = diffDays + 1;
+  return {y:y, m:m, d:d};
 }
 function bsToAd(y, m, d) {
-  var days = _bsTotalDaysUntil(y, m, d);
+  var totalDays = 0;
+  var cy = BS_ANCHOR_BS.y;
+  while(cy < y){ totalDays += _bsYearTotal(cy); cy++; }
+  for(var i=0; i<m-1; i++){ totalDays += _bsDaysInMonth(y, i+1); }
+  totalDays += (d-1);
   var ad = new Date(BS_ANCHOR_AD);
-  ad.setDate(ad.getDate() + days);
+  ad.setDate(ad.getDate() + totalDays);
   return ad;
 }
+
 function fmtBs(adDateStr, short) {
   if(!adDateStr) return '';
   try {
